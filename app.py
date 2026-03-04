@@ -163,8 +163,7 @@ def trigger_refresh(force: bool = False):
                 Path(LOCK_FILE).unlink(missing_ok=True)
             except Exception:
                 pass
-            # Clear caches after refresh
-            st.cache_data.clear()
+            # Cache clearing moved to the main thread in render_sidebar
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
@@ -205,6 +204,13 @@ def render_sidebar() -> dict:
 
         if is_refresh_running():
             st.info("⏳ Refresh in progress...")
+            if st.button("↻ Check status", use_container_width=True):
+                st.rerun()
+        elif st.session_state.get("refresh_started"):
+            st.success("✅ Refresh complete!")
+            # Clear caches so fresh data loads
+            st.cache_data.clear()
+            del st.session_state["refresh_started"]
 
         st.divider()
 
@@ -900,6 +906,56 @@ def page_filings():
                     st.text_area("Text preview:", snippet[:300], height=100, disabled=True)
 
 
+# ── Manual ISO file upload ────────────────────────────────────────────────────
+def _process_uploaded_iso_file(iso_key: str, content: bytes, filename: str) -> tuple[int, str]:
+    """Parse an uploaded ISO queue file and upsert projects into DB."""
+    from src.scrapers.pjm import PJMScraper
+    from src.scrapers.miso import MISOScraper
+    from src.scrapers.spp import SPPScraper
+    from src.scrapers.caiso import CAISOScraper
+    from src.scrapers.ercot import ERCOTScraper
+    from src.scrapers.iso_ne import ISONEScraper
+    from src.models.project import Project
+
+    scrapers = {
+        "pjm": PJMScraper, "miso": MISOScraper, "spp": SPPScraper,
+        "caiso": CAISOScraper, "ercot": ERCOTScraper, "iso_ne": ISONEScraper,
+    }
+    ScraperClass = scrapers.get(iso_key)
+    if not ScraperClass:
+        return 0, f"Unknown ISO key: {iso_key}"
+
+    config = load_config()
+    src_cfg = config.get("sources", {}).get(iso_key, {})
+    db = get_db()
+    scraper = ScraperClass(config=src_cfg, db=db)
+
+    try:
+        if iso_key == "ercot":
+            projects = scraper._parse_nll_file(content, filename)
+        else:
+            projects = scraper._parse_queue_xlsx(content, filename)
+    except Exception as e:
+        return 0, f"Parse error: {e}"
+
+    inserted = 0
+    for p in projects:
+        try:
+            if isinstance(p, Project):
+                p_dict = p.model_dump()
+                for field in ["in_service_date", "queue_date"]:
+                    if p_dict.get(field) and hasattr(p_dict[field], "isoformat"):
+                        p_dict[field] = p_dict[field].isoformat()
+                is_new, _ = db.upsert_project(p_dict)
+                if is_new:
+                    inserted += 1
+        except Exception:
+            continue
+
+    st.cache_data.clear()
+    return len(projects), f"Parsed {len(projects)} projects ≥100 MW, {inserted} new added to DB"
+
+
 # ── Page: Sources & Methodology ───────────────────────────────────────────────
 def page_sources():
     st.header("⚙️ Sources & Methodology")
@@ -955,6 +1011,65 @@ the project is omitted.
 
     st.divider()
 
+    # Manual upload section
+    st.subheader("📤 Manual File Upload")
+    st.markdown("""
+Some ISOs block automated downloads (bot protection). You can download the queue file manually
+in your browser and upload it here — the same parser runs on the uploaded file.
+""")
+
+    MANUAL_UPLOAD_SOURCES = {
+        "pjm": {
+            "label": "PJM Active Interconnection Requests",
+            "instructions": "Go to [pjm.com → Planning → Interconnection Queues](https://www.pjm.com/planning/services-requests/interconnection-queues), download **Active Interconnection Requests** (.xlsx)",
+            "filter": "Service Type = Load",
+        },
+        "miso": {
+            "label": "MISO GI Queue",
+            "instructions": "Go to [misoenergy.org → Planning → Generator Interconnection → GI Queue](https://www.misoenergy.org/planning/generator-interconnection/GI_Queue/), download the queue Excel file",
+            "filter": "Fuel Type = Load",
+        },
+        "spp": {
+            "label": "SPP GI Status Report",
+            "instructions": "Go to [spp.org → Engineering → Generation Interconnection](https://www.spp.org/engineering/generation-interconnection/generator-interconnection-status-report/), download the XLSX status report",
+            "filter": "Fuel Type = Load",
+        },
+        "ercot": {
+            "label": "ERCOT New Large Load (NLL) Status",
+            "instructions": "Go to [ercot.com → Services → Large Load Integration](https://www.ercot.com/services/rq/large-load-integration), download the NLL status spreadsheet",
+            "filter": "All rows are large load projects",
+        },
+        "iso_ne": {
+            "label": "ISO-NE Interconnection Queue",
+            "instructions": "Go to [iso-ne.com → Interconnection → Queue](https://www.iso-ne.com/interconnection/interconnection-request/interconnection-queue), download the queue Excel file",
+            "filter": "Resource Type = DR / Load",
+        },
+    }
+
+    upload_iso = st.selectbox(
+        "Select ISO to upload for:",
+        list(MANUAL_UPLOAD_SOURCES.keys()),
+        format_func=lambda k: MANUAL_UPLOAD_SOURCES[k]["label"],
+        key="upload_iso_select",
+    )
+    if upload_iso:
+        meta_u = MANUAL_UPLOAD_SOURCES[upload_iso]
+        st.info(f"📥 {meta_u['instructions']}\n\n*Filter hint: {meta_u['filter']}*")
+        uploaded = st.file_uploader(
+            f"Upload {meta_u['label']} XLSX/XLS/CSV",
+            type=["xlsx", "xls", "csv"],
+            key=f"upload_{upload_iso}",
+        )
+        if uploaded:
+            with st.spinner("Parsing uploaded file..."):
+                count, msg = _process_uploaded_iso_file(upload_iso, uploaded.read(), uploaded.name)
+            if count > 0:
+                st.success(f"✅ {msg}")
+            else:
+                st.warning(f"⚠️ {msg}")
+
+    st.divider()
+
     # Scraper status
     st.subheader("🔌 Data Source Status")
     runs_df = load_scraper_runs()
@@ -966,21 +1081,24 @@ the project is omitted.
             "nyiso": {"name": "NYISO Interconnection Queue", "iso": "NYISO",
                       "url": "https://www.nyiso.com/documents/20142/1407078/NYISO-Interconnection-Queue.xlsx",
                       "fields": "queue_id, project_name, MW, date, state, county, substation, voltage, POI"},
-            "pjm": {"name": "PJM Load Forecast + Adjustments", "iso": "PJM",
-                    "url": "https://www.pjm.com/planning/load-forecast",
-                    "fields": "project_name, MW, state, date, utility"},
-            "caiso": {"name": "CAISO Large Loads Initiative", "iso": "CAISO",
-                      "url": "https://www.caiso.com/generation-transmission/load/large-load",
-                      "fields": "project_name, MW (partial), state"},
-            "spp": {"name": "SPP HILL / Large Load Connection", "iso": "SPP",
-                    "url": "https://www.spp.org",
-                    "fields": "project_name, MW (partial), state"},
-            "miso": {"name": "MISO Large Loads Program", "iso": "MISO",
-                     "url": "https://www.misoenergy.org/engage/committees/large-loads/",
-                     "fields": "project_name, MW (partial), state"},
-            "ercot": {"name": "ERCOT Large Load Integration", "iso": "ERCOT",
+            "pjm": {"name": "PJM Active Interconnection Queue", "iso": "PJM",
+                    "url": "https://www.pjm.com/planning/services-requests/interconnection-queues",
+                    "fields": "queue_id, project_name, MW, state, date, substation"},
+            "caiso": {"name": "CAISO Generator Interconnection Queue", "iso": "CAISO",
+                      "url": "https://www.caiso.com/Documents/GeneratorInterconnectionQueue.xlsx",
+                      "fields": "queue_id, project_name, MW, state, county, substation"},
+            "spp": {"name": "SPP Generator Interconnection Queue", "iso": "SPP",
+                    "url": "https://www.spp.org/engineering/generation-interconnection/generator-interconnection-status-report/",
+                    "fields": "queue_id, project_name, MW, state, county, substation"},
+            "miso": {"name": "MISO Generator Interconnection Queue", "iso": "MISO",
+                     "url": "https://www.misoenergy.org/planning/generator-interconnection/GI_Queue/",
+                     "fields": "queue_id, project_name, MW, state, county, substation"},
+            "ercot": {"name": "ERCOT New Large Load Integration", "iso": "ERCOT",
                       "url": "https://www.ercot.com/services/rq/large-load-integration",
-                      "fields": "project_name, MW (partial), state"},
+                      "fields": "queue_id, project_name, MW, county, substation"},
+            "iso_ne": {"name": "ISO-NE Generator Interconnection Queue", "iso": "ISO-NE",
+                       "url": "https://www.iso-ne.com/interconnection/interconnection-request/interconnection-queue",
+                       "fields": "queue_id, project_name, MW, state, town, substation"},
             "ferc_filings": {"name": "FERC Filings Tracker", "iso": "FERC",
                              "url": "https://www.ferc.gov/rm26-4",
                              "fields": "filing title, date, URL, extracted MW (low confidence)"},
@@ -1017,7 +1135,7 @@ the project is omitted.
                     if url:
                         st.markdown(f"[🔗 Source URL]({url})")
                     if run_row.get("error_message"):
-                        st.error(f"Error: {run_row['error_message']}")
+                        st.warning(f"ℹ️ {run_row['error_message']}")
                     if run_row.get("content_hash"):
                         st.caption(f"Content hash: {run_row['content_hash'][:12]}...")
 

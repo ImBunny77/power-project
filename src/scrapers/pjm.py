@@ -87,8 +87,9 @@ class PJMScraper(BaseScraper):
                             break
 
         if not result.success or not result.content:
-            self._log(f"PJM queue download failed: {result.error}")
-            return [], self._finish_run(ScraperStatus.FAILED, result.error)
+            msg = "PJM queue requires browser session (bot protection). Download manually from pjm.com and upload via Sources tab."
+            self._log(msg)
+            return [], self._finish_run(ScraperStatus.PARTIAL, msg)
 
         run.content_hash = result.content_hash
         run.bytes_downloaded = result.bytes_downloaded or 0
@@ -110,8 +111,17 @@ class PJMScraper(BaseScraper):
         return projects, self._finish_run(status)
 
     def _parse_queue_xlsx(self, content: bytes, source_url: str) -> list[Project]:
+        if b"<!DOCTYPE html>" in content[:200].lower() or b"<html" in content[:200].lower():
+            self._log("PJM queue blocks automated access (bot protection). Download manually and upload via Sources tab.")
+            return []
+
         projects = []
-        xl = pd.ExcelFile(io.BytesIO(content), engine="openpyxl")
+        try:
+            xl = pd.ExcelFile(io.BytesIO(content), engine="openpyxl")
+        except Exception as e:
+            self._log(f"Failed to load Excel file: {e}")
+            return []
+
         self._log(f"PJM XLSX sheets: {xl.sheet_names}")
 
         for sheet in xl.sheet_names:
