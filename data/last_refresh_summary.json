@@ -1,19 +1,19 @@
 {
-  "run_id": "f4bc02fe",
-  "started_at": "2026-03-04T14:42:21.017393",
+  "run_id": "590f4e4c",
+  "started_at": "2026-03-04T20:23:47.735591",
   "sources_run": [
     {
-      "source": "nyiso",
+      "source": "miso",
       "status": "success",
-      "projects": 32
+      "projects": 2861
     }
   ],
-  "total_new": 32,
+  "total_new": 2861,
   "total_updated": 0,
   "total_removed": 0,
-  "total_projects": 32,
+  "total_projects": 2893,
   "errors": [],
-  "finished_at": "2026-03-04T14:42:22.399654",
-  "duration_seconds": 1.382261,
+  "finished_at": "2026-03-04T20:24:38.631307",
+  "duration_seconds": 50.895716,
   "total_unchanged": 0
 }
