@@ -51,17 +51,29 @@ LOCK_FILE = APP_CFG.get("refresh_lock_file", "data/.refresh.lock")
 # ── Database ─────────────────────────────────────────────────────────────────
 @st.cache_resource
 def get_db() -> Database:
-    db = Database(DB_PATH)
-    # Auto-refresh if database is empty (first run on Streamlit Cloud)
-    if db.get_project_count(min_mw=0) == 0:
-        try:
-            from src.pipeline.refresh import run_refresh
-            with st.spinner("First run — fetching data from ISOs... (this takes ~60s)"):
-                run_refresh(force_refresh=True, db=db)
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"Auto-refresh failed: {e}")
-    return db
+    return Database(DB_PATH)
+
+
+def ensure_data_loaded():
+    """Auto-refresh if database is empty (first run on Streamlit Cloud)."""
+    if "data_initialized" not in st.session_state:
+        db = get_db()
+        if db.get_project_count(min_mw=0) == 0:
+            with st.spinner("First run — fetching data from ISOs... (this may take ~90 seconds)"):
+                try:
+                    from src.pipeline.refresh import run_refresh
+                    import logging
+                    logging.basicConfig(level=logging.INFO)
+                    summary = run_refresh(force_refresh=True, db=db)
+                    st.session_state["data_initialized"] = True
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    import traceback
+                    st.error(f"Auto-refresh failed: {e}\n\n{traceback.format_exc()}")
+                    st.session_state["data_initialized"] = True
+        else:
+            st.session_state["data_initialized"] = True
 
 
 # ── Cached data loaders ───────────────────────────────────────────────────────
@@ -1152,6 +1164,9 @@ in your browser and upload it here — the same parser runs on the uploaded file
 
 # ── Main App ──────────────────────────────────────────────────────────────────
 def main():
+    # Auto-populate database on first run (Streamlit Cloud)
+    ensure_data_loaded()
+
     # CSS — explicit colors so text is always readable regardless of system dark/light mode
     st.markdown("""
     <style>
