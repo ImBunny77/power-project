@@ -18,10 +18,12 @@ from src.utils.downloader import download_file
 
 logger = logging.getLogger(__name__)
 
-# ERCOT New Large Load (NLL) status report — JSON file list API
-NLL_JSON_URL = "https://www.ercot.com/misapp/servlets/IceDocListJsonWS?reportTypeId=13051&lang=EN"
-NLL_HTML_URL = "https://www.ercot.com/misapp/GetReports.do?reportTypeId=13051"
+# ERCOT New Large Load (NLL) status report
+# reportTypeId=13051 is 60_Day_DAM_Disclosure (wrong). NLL data is not yet
+# published in MISAPP. Download manually from ercot.com and upload via Sources tab.
 NLL_PAGE_URL = "https://www.ercot.com/services/rq/large-load-integration"
+NLL_HTML_URL = "https://www.ercot.com/misapp/GetReports.do?reportTypeId=13051"
+NLL_JSON_URL = "https://www.ercot.com/misapp/servlets/IceDocListJsonWS?reportTypeId=13051&lang=EN"
 
 COLUMN_MAP = {
     "queue_id":     ["LLI ID", "Project ID", "ID", "Request ID", "NLL ID"],
@@ -112,8 +114,9 @@ class ERCOTScraper(BaseScraper):
                             break
 
         if not content:
-            self._log("ERCOT NLL download failed — no file found")
-            return [], self._finish_run(ScraperStatus.FAILED, "Could not download ERCOT NLL file")
+            msg = "ERCOT NLL project data not available via automated download. Download status report manually from ercot.com/services/rq/large-load-integration and upload via Sources tab."
+            self._log(msg)
+            return [], self._finish_run(ScraperStatus.PARTIAL, msg)
 
         self._log(f"Downloaded {run.bytes_downloaded:,} bytes from {file_url}")
 
@@ -202,7 +205,7 @@ class ERCOTScraper(BaseScraper):
         for _, row in df.iterrows():
             try:
                 mw = self.parse_mw(row.get(mw_col))
-                if mw is None or mw < 100:
+                if mw is None:
                     continue
 
                 queue_id = _clean(row, queue_col)

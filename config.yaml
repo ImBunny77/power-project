@@ -2,7 +2,7 @@
 # Power Project Configuration
 app:
   title: "U.S. Large Load Interconnection Tracker"
-  min_mw: 100
+  min_mw: 0
   db_path: "data/power_project.db"
   log_level: "INFO"
   refresh_lock_file: "data/.refresh.lock"

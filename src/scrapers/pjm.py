@@ -177,7 +177,7 @@ class PJMScraper(BaseScraper):
                 type_val = str(row.get(type_col, "") if type_col else "").strip().lower()
 
                 mw = self.parse_mw(row.get(mw_col))
-                if mw is None or mw < 100:
+                if mw is None:
                     continue
 
                 queue_id = _clean(row, queue_col)

@@ -206,7 +206,7 @@ class NYISOScraper(BaseScraper):
                 # Parse MW
                 mw_raw = row.get(mw_col) if mw_col else None
                 mw = self.parse_mw(mw_raw)
-                if mw is None or mw < 100:
+                if mw is None:
                     continue
 
                 # Parse other fields
