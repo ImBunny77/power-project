@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \":*)",
+      "Bash(python3 -c \":*)",
+      "Bash(python3 -m src.pipeline.refresh --sources nyiso --log-level INFO)",
+      "Bash(python3 -m pip install streamlit pydeck)",
+      "Bash(ssh -V)",
+      "Bash(curl --version)",
+      "Bash(node --version)",
+      "Bash(npm --version)",
+      "Bash(ss -tlnp)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://free-dots-rescue.loca.lt\" --max-time 10)",
+      "Bash(export PATH=\"$PATH:/c/Program Files/GitHub CLI\")",
+      "Bash(gh auth status)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\blake\\OneDrive\\Desktop\\Power Project\\src",
+      "c:\\Users\\blake\\.claude\\projects\\c--Users-blake-OneDrive-Desktop-Power-Project"
+    ]
+  }
+}

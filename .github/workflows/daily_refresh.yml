@@ -1,0 +1,98 @@
+name: Daily Data Refresh
+
+on:
+  schedule:
+    # Run every day at 6:00 AM UTC (adjust as needed)
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      force_refresh:
+        description: "Force re-download all sources"
+        required: false
+        default: "false"
+        type: boolean
+      sources:
+        description: "Comma-separated source keys to run (empty = all)"
+        required: false
+        default: ""
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Create data directory
+        run: mkdir -p data
+
+      - name: Restore SQLite DB from artifact (if exists)
+        uses: dawidd6/action-download-artifact@v3
+        continue-on-error: true
+        with:
+          name: power-project-db
+          path: data/
+          if_no_artifact_found: ignore
+
+      - name: Run refresh pipeline
+        env:
+          FORCE_REFRESH: ${{ github.event.inputs.force_refresh }}
+          SOURCES: ${{ github.event.inputs.sources }}
+        run: |
+          ARGS=""
+          if [ "$FORCE_REFRESH" = "true" ]; then
+            ARGS="$ARGS --force"
+          fi
+          if [ -n "$SOURCES" ]; then
+            ARGS="$ARGS --sources $(echo $SOURCES | tr ',' ' ')"
+          fi
+          python -m src.pipeline.refresh $ARGS
+
+      - name: Upload SQLite DB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: power-project-db
+          path: data/power_project.db
+          retention-days: 30
+
+      - name: Upload refresh summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: refresh-summary
+          path: data/last_refresh_summary.json
+          retention-days: 7
+
+      - name: Commit updated DB to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/power_project.db data/last_refresh_summary.json || true
+          git diff --staged --quiet || git commit -m "chore: daily data refresh $(date -u +%Y-%m-%d)"
+          git push || echo "Nothing to push"
+
+      - name: Post summary to job
+        if: always()
+        run: |
+          if [ -f data/last_refresh_summary.json ]; then
+            cat data/last_refresh_summary.json
+          fi

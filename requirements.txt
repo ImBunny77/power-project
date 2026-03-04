@@ -1,0 +1,47 @@
+# Power Project — U.S. Large Load Interconnection Tracker
+# Python 3.11+
+
+# Core web framework
+streamlit>=1.35.0
+
+# Data processing
+pandas>=2.1.0
+numpy>=1.26.0
+openpyxl>=3.1.0  # XLSX reading
+xlrd>=2.0.1      # Older XLS support
+
+# HTTP / Web scraping
+requests>=2.31.0
+urllib3>=2.1.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0      # Fast HTML parser for BeautifulSoup
+
+# PDF parsing (install at least one)
+pdfplumber>=0.10.0
+pymupdf>=1.23.0  # aka fitz — faster, also extracts tables
+
+# Schema / validation
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Deduplication
+rapidfuzz>=3.6.0
+
+# Mapping
+pydeck>=0.8.0
+
+# YAML config
+pyyaml>=6.0.1
+
+# Structured logging
+structlog>=24.1.0
+
+# Type hints backport (for 3.11 compat)
+typing-extensions>=4.9.0
+
+# Optional: geocoding (Nominatim requires no key)
+# geopy>=2.4.0
+
+# Dev/test extras (optional)
+# pytest>=8.0.0
+# pytest-asyncio>=0.23.0

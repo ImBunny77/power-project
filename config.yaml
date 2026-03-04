@@ -1,0 +1,168 @@
+---
+# Power Project Configuration
+app:
+  title: "U.S. Large Load Interconnection Tracker"
+  min_mw: 100
+  db_path: "data/power_project.db"
+  log_level: "INFO"
+  refresh_lock_file: "data/.refresh.lock"
+
+sources:
+  nyiso:
+    enabled: true
+    name: "NYISO Interconnection Queue"
+    url: "https://www.nyiso.com/documents/20142/1407078/NYISO-Interconnection-Queue.xlsx"
+    type: "xlsx"
+    iso: "NYISO"
+    category: "interconnection_queue"
+    description: "NYISO official interconnection queue with load projects and POI fields"
+
+  pjm_load_forecast:
+    enabled: true
+    name: "PJM Load Forecast Tables"
+    url: "https://www.pjm.com/-/media/DotCom/planning/res-adeq/load-forecast/2025-load-report-tables.xlsx"
+    type: "xlsx"
+    iso: "PJM"
+    category: "load_forecast"
+    description: "PJM annual load forecast tables with zone-level projections"
+
+  pjm_large_load_adj:
+    enabled: true
+    name: "PJM Load Adjustment Request Implementation"
+    url: "https://www.pjm.com/-/media/DotCom/committees-groups/subcommittees/las/postings/load-adjustment-request-implementation.pdf"
+    type: "pdf"
+    iso: "PJM"
+    category: "large_load_adjustments"
+    description: "PJM large load adjustment requests and implementation details"
+
+  pjm_discovery:
+    enabled: true
+    name: "PJM Large Load Document Discovery"
+    url: "https://www.pjm.com"
+    type: "discovery"
+    iso: "PJM"
+    category: "document_discovery"
+    description: "Crawls PJM site for large load related documents"
+    search_terms: ["large load", "data center", "co-located", "provisional load"]
+    allowed_domains: ["pjm.com", "www.pjm.com"]
+
+  caiso_large_loads:
+    enabled: true
+    name: "CAISO Large Loads Initiative"
+    url: "https://www.caiso.com/generation-transmission/load/large-load"
+    type: "html"
+    iso: "CAISO"
+    category: "large_loads_program"
+    description: "CAISO large loads initiative page with issue papers and program materials"
+
+  spp_large_load:
+    enabled: true
+    name: "SPP Large Load Connection Proposal"
+    url: "https://www.spp.org/news-list/ferc-approves-spp-s-large-load-connection-proposal/"
+    type: "html"
+    iso: "SPP"
+    category: "large_loads_program"
+    description: "SPP HILL/provisional load process materials"
+
+  miso_large_loads:
+    enabled: true
+    name: "MISO Large Loads Program"
+    url: "https://www.misoenergy.org/engage/committees/large-loads/"
+    type: "html"
+    iso: "MISO"
+    category: "large_loads_program"
+    description: "MISO large loads committee page with meeting materials and data tables"
+
+  ercot_large_load:
+    enabled: true
+    name: "ERCOT Large Load Integration"
+    url: "https://www.ercot.com/services/rq/large-load-integration"
+    type: "html"
+    iso: "ERCOT"
+    category: "large_loads_program"
+    description: "ERCOT large load integration forms and guides"
+
+ferc_dockets:
+  - id: "RM26-4"
+    name: "Interconnection of Large Loads"
+    url: "https://www.ferc.gov/rm26-4"
+    search_keywords: ["data center", "large load", "co-located", "provisional load", "HILL", "hyperscale"]
+    enabled: true
+
+  - id: "CHAIRMAN_LETTER"
+    name: "Chairman Rosner Letter on Large Load Forecasting"
+    url: "https://www.ferc.gov/news-events/news/chairman-rosners-letter-rtosisos-large-load-forecasting"
+    search_keywords: ["large load", "forecasting", "data center"]
+    enabled: true
+
+dedup:
+  # Thresholds for fuzzy matching
+  name_similarity_threshold: 85
+  mw_tolerance_pct: 10.0
+  # Fields used for dedup key when queue ID not available
+  fuzzy_fields: ["project_name", "county", "state", "poi_text"]
+
+iso_states:
+  NYISO:
+    - NY
+  PJM:
+    - PA
+    - NJ
+    - MD
+    - DE
+    - VA
+    - WV
+    - OH
+    - IN
+    - MI
+    - IL
+    - NC
+    - DC
+    - KY
+    - TN
+  MISO:
+    - IL
+    - IN
+    - IA
+    - MI
+    - MN
+    - MO
+    - MT
+    - ND
+    - SD
+    - WI
+    - KY
+    - MS
+    - AR
+    - TX
+    - LA
+  SPP:
+    - KS
+    - NE
+    - OK
+    - TX
+    - SD
+    - ND
+    - MO
+    - AR
+    - LA
+    - NM
+    - CO
+    - WY
+    - MT
+  CAISO:
+    - CA
+  ISO-NE:
+    - CT
+    - ME
+    - MA
+    - NH
+    - RI
+    - VT
+  ERCOT:
+    - TX
+
+geocoding:
+  enabled: false  # Set to true if you have a geocoding API key
+  provider: "nominatim"  # nominatim (free) or google
+  cache_db: "data/geocode_cache.db"
