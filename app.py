@@ -66,6 +66,7 @@ def ensure_data_loaded():
                     logging.basicConfig(level=logging.INFO)
                     summary = run_refresh(force_refresh=True, db=db)
                     st.session_state["data_initialized"] = True
+                    st.session_state["first_run_summary"] = summary
                     st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
@@ -74,6 +75,22 @@ def ensure_data_loaded():
                     st.session_state["data_initialized"] = True
         else:
             st.session_state["data_initialized"] = True
+
+    # Show first-run summary if available
+    if "first_run_summary" in st.session_state:
+        summary = st.session_state.pop("first_run_summary")
+        sources = summary.get("sources_run", [])
+        total = summary.get("total_projects", 0)
+        if total > 0:
+            st.success(f"✅ Database populated with {total:,} projects!")
+        else:
+            st.warning("⚠️ No projects were loaded. Scraper results:")
+        for src in sources:
+            icon = "✅" if src["projects"] > 0 else ("⚠️" if src["status"] == "partial" else "❌")
+            st.caption(f"{icon} {src['source'].upper()}: {src['projects']} projects ({src['status']})")
+        if summary.get("errors"):
+            for err in summary["errors"]:
+                st.error(f"Error in {err['source']}: {err['error']}")
 
 
 # ── Cached data loaders ───────────────────────────────────────────────────────
