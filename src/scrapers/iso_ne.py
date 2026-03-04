@@ -92,8 +92,9 @@ class ISONEScraper(BaseScraper):
                             break
 
         if not result.success or not result.content:
-            self._log(f"ISO-NE queue download failed: {result.error}")
-            return [], self._finish_run(ScraperStatus.FAILED, result.error)
+            msg = "ISO-NE queue URL returned 404. Download manually from iso-ne.com and upload via Sources tab."
+            self._log(msg)
+            return [], self._finish_run(ScraperStatus.PARTIAL, msg)
 
         run.content_hash = result.content_hash
         run.bytes_downloaded = result.bytes_downloaded or 0
@@ -163,9 +164,6 @@ class ISONEScraper(BaseScraper):
         for _, row in df.iterrows():
             try:
                 type_val = str(row.get(type_col, "") if type_col else "").strip().lower()
-                if type_col and type_val not in ("", "nan", "none"):
-                    if not any(lv in type_val for lv in LOAD_TYPES):
-                        continue
 
                 mw = self.parse_mw(row.get(mw_col))
                 if mw is None or mw < 100:

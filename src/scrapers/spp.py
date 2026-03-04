@@ -126,8 +126,9 @@ class SPPScraper(BaseScraper):
                             break
 
         if not content:
-            self._log("SPP queue download failed")
-            return [], self._finish_run(ScraperStatus.FAILED, "Could not download SPP GI queue file")
+            msg = "SPP queue blocks automated access (connection reset). Download manually from spp.org and upload via Sources tab."
+            self._log(msg)
+            return [], self._finish_run(ScraperStatus.PARTIAL, msg)
 
         self._log(f"Downloaded {run.bytes_downloaded:,} bytes from {xlsx_url}")
 
@@ -210,9 +211,6 @@ class SPPScraper(BaseScraper):
         for _, row in df.iterrows():
             try:
                 type_val = str(row.get(type_col, "") if type_col else "").strip().lower()
-                if type_col and type_val not in ("", "nan", "none"):
-                    if not any(lv in type_val for lv in LOAD_TYPES):
-                        continue
 
                 mw = self.parse_mw(row.get(mw_col))
                 if mw is None or mw < 100:

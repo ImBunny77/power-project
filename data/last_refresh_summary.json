@@ -1,19 +1,54 @@
 {
-  "run_id": "590f4e4c",
-  "started_at": "2026-03-04T20:23:47.735591",
+  "run_id": "e4d141d1",
+  "started_at": "2026-03-04T20:39:48.482259",
   "sources_run": [
+    {
+      "source": "nyiso",
+      "status": "success",
+      "projects": 75
+    },
+    {
+      "source": "pjm",
+      "status": "partial",
+      "projects": 0
+    },
+    {
+      "source": "caiso",
+      "status": "success",
+      "projects": 102
+    },
+    {
+      "source": "spp",
+      "status": "partial",
+      "projects": 0
+    },
     {
       "source": "miso",
       "status": "success",
       "projects": 2861
+    },
+    {
+      "source": "ercot",
+      "status": "partial",
+      "projects": 0
+    },
+    {
+      "source": "iso_ne",
+      "status": "partial",
+      "projects": 0
+    },
+    {
+      "source": "ferc_filings",
+      "status": "partial",
+      "projects": 0
     }
   ],
-  "total_new": 2861,
-  "total_updated": 0,
+  "total_new": 145,
+  "total_updated": 2893,
   "total_removed": 0,
-  "total_projects": 2893,
+  "total_projects": 3038,
   "errors": [],
-  "finished_at": "2026-03-04T20:24:38.631307",
-  "duration_seconds": 50.895716,
+  "finished_at": "2026-03-04T20:40:53.148290",
+  "duration_seconds": 64.666031,
   "total_unchanged": 0
 }

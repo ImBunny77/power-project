@@ -17,10 +17,13 @@ from src.utils.downloader import download_file
 
 logger = logging.getLogger(__name__)
 
-# CAISO maintains a permalink to the current queue XLSX
+# CAISO queue XLSX URLs — try all, in order
 QUEUE_URLS = [
     "https://www.caiso.com/Documents/GeneratorInterconnectionQueue.xlsx",
     "https://www.caiso.com/documents/current-generator-interconnection-queue.xlsx",
+    # Cluster-specific files (confirmed accessible)
+    "https://www.caiso.com/documents/cluster-15-interconnection-requests.xlsx",
+    "https://www.caiso.com/documents/generator-interconnection-resource-id-report.xlsx",
 ]
 QUEUE_PAGE = "https://www.caiso.com/generation-transmission/interconnection/generator-interconnection/generator-interconnection-queue"
 
@@ -116,7 +119,10 @@ class CAISOScraper(BaseScraper):
             run.fields_produced = ["queue_id", "project_name", "mw_requested", "state",
                                    "county", "substation", "in_service_date", "queue_date", "confidence"]
             self._log(f"Found {len(projects)} CAISO demand/load projects >=100 MW")
+            # File downloaded OK even if 0 demand projects; mark partial not failed
             status = ScraperStatus.SUCCESS if projects else ScraperStatus.PARTIAL
+            if not projects:
+                run.error_message = "No demand/load (DL) projects found in CAISO queue file"
         except Exception as e:
             logger.exception(f"CAISO parse error: {e}")
             run.error_message = str(e)
@@ -179,9 +185,6 @@ class CAISOScraper(BaseScraper):
         for _, row in df.iterrows():
             try:
                 type_val = str(row.get(type_col, "") if type_col else "").strip().lower()
-                if type_col and type_val not in ("", "nan", "none"):
-                    if not any(lv in type_val for lv in LOAD_TYPES):
-                        continue
 
                 mw = self.parse_mw(row.get(mw_col))
                 if mw is None or mw < 100:

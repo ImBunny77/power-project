@@ -269,9 +269,6 @@ class MISOScraper(BaseScraper):
         for _, row in df.iterrows():
             try:
                 type_val = str(row.get(type_col, "") if type_col else "").strip().lower()
-                if type_col and type_val not in ("", "nan", "none"):
-                    if not any(lv in type_val for lv in LOAD_TYPES):
-                        continue
 
                 mw = self.parse_mw(row.get(mw_col))
                 if mw is None or mw < 100:

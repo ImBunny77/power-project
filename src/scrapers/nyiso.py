@@ -203,18 +203,6 @@ class NYISOScraper(BaseScraper):
                 type_val = str(row.get(type_col, "") if type_col else "").strip()
                 sp_val = str(row.get(sp_col, "") if sp_col else "").strip()
 
-                # Include if type indicates load, or if no type column (include all)
-                is_load = False
-                if type_col:
-                    is_load = type_val.upper() in ("L", "LOAD") or "load" in type_val.lower()
-                elif sp_col:
-                    is_load = sp_val.upper() in ("L", "LOAD") or "load" in sp_val.lower()
-                else:
-                    is_load = True  # No type filter available, include all
-
-                if not is_load:
-                    continue
-
                 # Parse MW
                 mw_raw = row.get(mw_col) if mw_col else None
                 mw = self.parse_mw(mw_raw)
