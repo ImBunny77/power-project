@@ -70,19 +70,45 @@ class MISOScraper(BaseScraper):
         run = self._new_run()
         projects = []
 
+        # 1) Try the JSON API endpoint first (bypasses 403 on page)
+        json_api = "https://www.misoenergy.org/api/giqueue/getprojects"
+        self._log(f"Trying MISO JSON API: {json_api}")
+        try:
+            import cloudscraper
+            scraper = cloudscraper.create_scraper(
+                browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
+            )
+            r = scraper.get(json_api, timeout=30)
+            if r.status_code == 200 and r.headers.get("content-type", "").startswith("application/json"):
+                data = r.json()
+                self._log(f"MISO API returned {len(data)} total projects")
+                run.bytes_downloaded = len(r.content)
+                projects = self._parse_json_api(data, json_api)
+                run.projects_found = len(projects)
+                run.fields_produced = ["queue_id", "project_name", "mw_requested", "state",
+                                       "county", "substation", "in_service_date", "queue_date", "confidence"]
+                self._log(f"Found {len(projects)} MISO projects ≥100 MW from API")
+                status = ScraperStatus.SUCCESS if projects else ScraperStatus.PARTIAL
+                if not projects:
+                    run.error_message = "MISO API returned data but no large load projects found"
+                return projects, self._finish_run(status)
+        except ImportError:
+            self._log("cloudscraper not installed, skipping API approach")
+        except Exception as e:
+            self._log(f"MISO API failed: {e}")
+
+        # 2) Try XLSX download approaches
         xlsx_url = self.config.get("queue_url", "")
         content = None
 
-        # 1) Try API endpoint
         if not xlsx_url:
-            self._log("Trying MISO GI queue API endpoint...")
+            self._log("Trying MISO GI queue file API endpoint...")
             r = download_file(GI_QUEUE_API, timeout=20)
             if r.success and r.content and b"PK" in r.content[:4]:
                 content = r.content
                 xlsx_url = GI_QUEUE_API
                 run.bytes_downloaded = r.bytes_downloaded or 0
 
-        # 2) Parse GI Queue page to find the XLSX link
         if not content:
             self._log(f"Fetching MISO GI Queue page: {GI_QUEUE_PAGE}")
             page = download_file(GI_QUEUE_PAGE, timeout=15)
@@ -98,21 +124,11 @@ class MISOScraper(BaseScraper):
                             xlsx_url = full
                             run.bytes_downloaded = r.bytes_downloaded or 0
                             break
-                if not content:
-                    # also try cdn pattern
-                    for a in soup.find_all("a", href=True):
-                        href = str(a["href"])
-                        if "cdn.misoenergy.org" in href or "GI" in href:
-                            r = download_file(href, timeout=30)
-                            if r.success and r.content:
-                                content = r.content
-                                xlsx_url = href
-                                run.bytes_downloaded = r.bytes_downloaded or 0
-                                break
 
         if not content:
-            self._log("MISO GI Queue download failed")
-            return [], self._finish_run(ScraperStatus.FAILED, "Could not download MISO GI Queue XLSX")
+            msg = "MISO GI Queue blocks automated access (403). Download manually from misoenergy.org and upload via Sources tab."
+            self._log(msg)
+            return [], self._finish_run(ScraperStatus.PARTIAL, msg)
 
         run.content_hash = None
         self._log(f"Downloaded {run.bytes_downloaded:,} bytes from {xlsx_url}")
@@ -130,6 +146,73 @@ class MISOScraper(BaseScraper):
             status = ScraperStatus.FAILED
 
         return projects, self._finish_run(status)
+
+    def _parse_json_api(self, data: list[dict], source_url: str) -> list[Project]:
+        """Parse projects from MISO JSON API response."""
+        projects = []
+        now = datetime.utcnow()
+
+        for item in data:
+            try:
+                # Check fuel type — include all large projects since MISO
+                # doesn't separate load interconnection from generation
+                fuel = str(item.get("fuelType", "") or "").strip().lower()
+
+                mw = float(item.get("summerNetMW") or item.get("winterNetMW") or 0)
+                if mw < 100:
+                    continue
+
+                queue_id = str(item.get("projectNumber", "")).strip() or None
+                project_name = str(item.get("projectName", "")).strip() or f"MISO Project {queue_id or '?'}"
+                state = str(item.get("state", "")).strip()[:2].upper() or None
+                county = str(item.get("county", "")).strip() or None
+                poi_name = str(item.get("poiName", "")).strip() or None
+                utility = str(item.get("transmissionOwner", "")).strip() or None
+
+                in_service_raw = item.get("inService") or item.get("proposedInServiceDate")
+                in_service = self.parse_date(in_service_raw)
+
+                study_phase = str(item.get("studyPhase", "")).strip().lower()
+                post_gia = str(item.get("postGIAStatus", "")).strip().lower()
+                if "withdrawn" in post_gia or "withdrawn" in study_phase:
+                    proj_status = ProjectStatus.WITHDRAWN
+                elif "done" in post_gia or "operational" in post_gia:
+                    proj_status = ProjectStatus.COMPLETED
+                else:
+                    proj_status = ProjectStatus.ACTIVE
+
+                if state in ("", "None", "nan"):
+                    state = None
+                if county in ("", "None", "nan"):
+                    county = None
+                if poi_name in ("", "None", "nan"):
+                    poi_name = None
+                if utility in ("", "None", "nan"):
+                    utility = None
+
+                projects.append(Project(
+                    iso="MISO",
+                    queue_id=queue_id,
+                    project_name=project_name,
+                    category=self.classify_category(project_name),
+                    status=proj_status,
+                    mw_requested=mw,
+                    mw_definition="Summer Net MW from MISO GI Queue API",
+                    in_service_date=in_service,
+                    state=state,
+                    county=county,
+                    substation=poi_name,
+                    poi_text=poi_name,
+                    utility=utility,
+                    source_url=source_url,
+                    source_name="MISO Generator Interconnection Queue (API)",
+                    source_iso="MISO",
+                    confidence=ConfidenceLevel.HIGH if poi_name else ConfidenceLevel.MEDIUM,
+                    last_checked=now,
+                ))
+            except Exception:
+                continue
+        return projects
 
     def _parse_queue_xlsx(self, content: bytes, source_url: str) -> list[Project]:
         projects = []

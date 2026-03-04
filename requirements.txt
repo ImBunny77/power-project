@@ -14,6 +14,7 @@ xlrd>=2.0.1      # Older XLS support
 requests>=2.31.0
 urllib3>=2.1.0
 beautifulsoup4>=4.12.0
+cloudscraper>=1.2.71   # Bot-protection bypass for ISO websites
 lxml>=5.0.0      # Fast HTML parser for BeautifulSoup
 
 # PDF parsing (install at least one)
