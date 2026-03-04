@@ -51,7 +51,17 @@ LOCK_FILE = APP_CFG.get("refresh_lock_file", "data/.refresh.lock")
 # ── Database ─────────────────────────────────────────────────────────────────
 @st.cache_resource
 def get_db() -> Database:
-    return Database(DB_PATH)
+    db = Database(DB_PATH)
+    # Auto-refresh if database is empty (first run on Streamlit Cloud)
+    if db.get_project_count(min_mw=0) == 0:
+        try:
+            from src.pipeline.refresh import run_refresh
+            with st.spinner("First run — fetching data from ISOs... (this takes ~60s)"):
+                run_refresh(force_refresh=True, db=db)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Auto-refresh failed: {e}")
+    return db
 
 
 # ── Cached data loaders ───────────────────────────────────────────────────────
