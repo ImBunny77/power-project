@@ -32,6 +32,7 @@ from src.scrapers.caiso import CAISOScraper
 from src.scrapers.spp import SPPScraper
 from src.scrapers.miso import MISOScraper
 from src.scrapers.ercot import ERCOTScraper
+from src.scrapers.iso_ne import ISONEScraper
 from src.scrapers.ferc_filings import FERCFilingsScraper
 from src.storage.database import Database
 
@@ -44,6 +45,7 @@ SCRAPER_REGISTRY = {
     "spp": SPPScraper,
     "miso": MISOScraper,
     "ercot": ERCOTScraper,
+    "iso_ne": ISONEScraper,
     "ferc_filings": FERCFilingsScraper,
 }
 
@@ -124,15 +126,13 @@ def run_refresh(
 
     # Run scrapers
     scraper_configs = {
-        "nyiso": sources_cfg.get("nyiso", {"url": "https://www.nyiso.com/documents/20142/1407078/NYISO-Interconnection-Queue.xlsx"}),
-        "pjm": {
-            **sources_cfg.get("pjm_load_forecast", {}),
-            "pdf_url": sources_cfg.get("pjm_large_load_adj", {}).get("url"),
-        },
-        "caiso": sources_cfg.get("caiso_large_loads", {"url": "https://www.caiso.com/generation-transmission/load/large-load"}),
-        "spp": sources_cfg.get("spp_large_load", {"url": "https://www.spp.org/news-list/ferc-approves-spp-s-large-load-connection-proposal/"}),
-        "miso": sources_cfg.get("miso_large_loads", {"url": "https://www.misoenergy.org/engage/committees/large-loads/"}),
-        "ercot": sources_cfg.get("ercot_large_load", {"url": "https://www.ercot.com/services/rq/large-load-integration"}),
+        "nyiso":    sources_cfg.get("nyiso", {}),
+        "pjm":      sources_cfg.get("pjm", {}),
+        "caiso":    sources_cfg.get("caiso", {}),
+        "spp":      sources_cfg.get("spp", {}),
+        "miso":     sources_cfg.get("miso", {}),
+        "ercot":    sources_cfg.get("ercot", {}),
+        "iso_ne":   sources_cfg.get("iso_ne", {}),
         "ferc_filings": {"ferc_dockets": ferc_dockets},
     }
 

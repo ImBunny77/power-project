@@ -15,72 +15,58 @@ sources:
     type: "xlsx"
     iso: "NYISO"
     category: "interconnection_queue"
-    description: "NYISO official interconnection queue with load projects and POI fields"
+    description: "NYISO official interconnection queue — load projects with MW, POI, and county"
 
-  pjm_load_forecast:
+  pjm:
     enabled: true
-    name: "PJM Load Forecast Tables"
-    url: "https://www.pjm.com/-/media/DotCom/planning/res-adeq/load-forecast/2025-load-report-tables.xlsx"
+    name: "PJM Active Interconnection Queue"
+    queue_url: "https://www.pjm.com/-/media/planning/services-requests/interconnection-queues/active-interconnection-requests.ashx"
     type: "xlsx"
     iso: "PJM"
-    category: "load_forecast"
-    description: "PJM annual load forecast tables with zone-level projections"
+    category: "interconnection_queue"
+    description: "PJM active interconnection queue XLSX — filter Service Type=Load for demand projects"
 
-  pjm_large_load_adj:
+  caiso:
     enabled: true
-    name: "PJM Load Adjustment Request Implementation"
-    url: "https://www.pjm.com/-/media/DotCom/committees-groups/subcommittees/las/postings/load-adjustment-request-implementation.pdf"
-    type: "pdf"
-    iso: "PJM"
-    category: "large_load_adjustments"
-    description: "PJM large load adjustment requests and implementation details"
-
-  pjm_discovery:
-    enabled: true
-    name: "PJM Large Load Document Discovery"
-    url: "https://www.pjm.com"
-    type: "discovery"
-    iso: "PJM"
-    category: "document_discovery"
-    description: "Crawls PJM site for large load related documents"
-    search_terms: ["large load", "data center", "co-located", "provisional load"]
-    allowed_domains: ["pjm.com", "www.pjm.com"]
-
-  caiso_large_loads:
-    enabled: true
-    name: "CAISO Large Loads Initiative"
-    url: "https://www.caiso.com/generation-transmission/load/large-load"
-    type: "html"
+    name: "CAISO Generator Interconnection Queue"
+    queue_url: "https://www.caiso.com/Documents/GeneratorInterconnectionQueue.xlsx"
+    type: "xlsx"
     iso: "CAISO"
-    category: "large_loads_program"
-    description: "CAISO large loads initiative page with issue papers and program materials"
+    category: "interconnection_queue"
+    description: "CAISO GI queue — filter Fuel=DL (Demand Load) for large load projects"
 
-  spp_large_load:
+  spp:
     enabled: true
-    name: "SPP Large Load Connection Proposal"
-    url: "https://www.spp.org/news-list/ferc-approves-spp-s-large-load-connection-proposal/"
-    type: "html"
+    name: "SPP Generator Interconnection Queue"
+    type: "xlsx"
     iso: "SPP"
-    category: "large_loads_program"
-    description: "SPP HILL/provisional load process materials"
+    category: "interconnection_queue"
+    description: "SPP GI status report — filter Resource Type=Load"
 
-  miso_large_loads:
+  miso:
     enabled: true
-    name: "MISO Large Loads Program"
-    url: "https://www.misoenergy.org/engage/committees/large-loads/"
-    type: "html"
+    name: "MISO Generator Interconnection Queue"
+    type: "xlsx"
     iso: "MISO"
-    category: "large_loads_program"
-    description: "MISO large loads committee page with meeting materials and data tables"
+    category: "interconnection_queue"
+    description: "MISO GI queue — filter Fuel Type=Load for demand projects"
 
-  ercot_large_load:
+  ercot:
     enabled: true
-    name: "ERCOT Large Load Integration"
-    url: "https://www.ercot.com/services/rq/large-load-integration"
-    type: "html"
+    name: "ERCOT New Large Load Integration"
+    type: "xlsx"
     iso: "ERCOT"
-    category: "large_loads_program"
-    description: "ERCOT large load integration forms and guides"
+    category: "interconnection_queue"
+    description: "ERCOT NLL status report — all rows are large load projects (TX only)"
+
+  iso_ne:
+    enabled: true
+    name: "ISO-NE Generator Interconnection Queue"
+    queue_url: "https://www.iso-ne.com/static-assets/documents/100002/intercon_queue.xlsx"
+    type: "xlsx"
+    iso: "ISO-NE"
+    category: "interconnection_queue"
+    description: "ISO-NE GI queue — filter Resource Type=DR/Load for demand projects"
 
 ferc_dockets:
   - id: "RM26-4"
@@ -153,6 +139,13 @@ iso_states:
   CAISO:
     - CA
   ISO-NE:
+    - CT
+    - ME
+    - MA
+    - NH
+    - RI
+    - VT
+  iso_ne:
     - CT
     - ME
     - MA

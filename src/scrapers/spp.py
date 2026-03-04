@@ -1,236 +1,262 @@
-"""SPP Large Load Connection (HILL / provisional load) scraper."""
+"""SPP Generator Interconnection Queue scraper."""
 from __future__ import annotations
 
+import io
 import logging
 from datetime import datetime
+from typing import Optional
 from urllib.parse import urljoin
 
+import pandas as pd
 from bs4 import BeautifulSoup
 
-from src.models.project import (
-    ConfidenceLevel, Project, ProjectCategory, ProjectStatus
-)
+from src.models.project import ConfidenceLevel, Project, ProjectStatus
 from src.models.scraper_run import ScraperRun, ScraperStatus
 from src.scrapers.base import BaseScraper
 from src.utils.downloader import download_file
-from src.utils.pdf_parser import extract_pdf_tables, extract_pdf_text
 
 logger = logging.getLogger(__name__)
 
-SPP_LARGE_LOAD_URLS = [
-    "https://www.spp.org/news-list/ferc-approves-spp-s-large-load-connection-proposal/",
-    "https://www.spp.org/markets-operations/rto/load-research/large-load-integration/",
-    "https://www.spp.org/engineering/generation-interconnection/large-load/",
-]
+QUEUE_PAGE = "https://www.spp.org/engineering/generation-interconnection/generator-interconnection-status-report/"
+QUEUE_PORTAL = "https://opsportal.spp.org/Studies/GISR"
 
-SPP_STATES = ["KS", "NE", "OK", "TX", "SD", "ND", "MO", "AR", "LA", "NM", "CO", "WY", "MT"]
+COLUMN_MAP = {
+    "queue_id":     ["GI_ID", "Transmission Queue#", "Queue #", "Request ID", "GI ID", "Queue ID"],
+    "project_name": ["Project Name", "Name", "Applicant", "Customer", "Entity"],
+    "fuel_type":    ["Fuel Type", "Resource Type", "Technology", "Type", "Fuel"],
+    "mw":           ["MW Requested", "Summer MW", "Capacity (MW)", "MW", "MW Request",
+                     "Net MW", "Capacity MW"],
+    "state":        ["State"],
+    "county":       ["County", "Location"],
+    "substation":   ["POI Substation", "Transmission Substation", "Substation",
+                     "Point of Interconnection", "POI", "Station"],
+    "utility":      ["Transmission Owner", "TO", "Zone", "Utility"],
+    "in_service":   ["Proposed In-Service Date", "COD", "Commercial Operation Date",
+                     "In Service Date", "Proposed COD"],
+    "queue_date":   ["Application Date", "Queue Date", "Received Date", "Date Submitted"],
+    "voltage":      ["Voltage (kV)", "kV", "Voltage", "POI Voltage"],
+    "status":       ["Status", "Queue Status", "Project Status"],
+}
+
+LOAD_TYPES = {"load", "demand response", "demand", "dr", "demand resource", "l"}
+
+
+def _find_col(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
+    cols_lower = {str(c).lower().strip(): c for c in df.columns}
+    for cand in candidates:
+        cl = cand.lower()
+        if cl in cols_lower:
+            return cols_lower[cl]
+        for col_lower, col_orig in cols_lower.items():
+            if cl in col_lower or col_lower in cl:
+                return col_orig
+    return None
+
+
+def _clean(row, col) -> Optional[str]:
+    if not col:
+        return None
+    v = str(row.get(col, "")).strip()
+    return None if v in ("", "nan", "None", "NaT") else v
 
 
 class SPPScraper(BaseScraper):
-    """Scrapes SPP large load program pages for project data."""
-
     source_key = "spp"
-    source_name = "SPP Large Load Connection (HILL)"
+    source_name = "SPP Generator Interconnection Queue"
     iso = "SPP"
 
     def run(self) -> tuple[list[Project], ScraperRun]:
         run = self._new_run()
         projects = []
-        docs = []
 
-        urls = [self.config.get("url", SPP_LARGE_LOAD_URLS[0])] + SPP_LARGE_LOAD_URLS[1:]
+        content = None
+        xlsx_url = self.config.get("queue_url", "")
 
-        for url in urls:
-            self._log(f"Fetching SPP page: {url}")
-            result = download_file(url, timeout=30)
-            if not result.success:
-                self._log(f"Failed: {result.error}")
-                continue
+        if xlsx_url:
+            r = download_file(xlsx_url, timeout=25)
+            if r.success and r.content:
+                content = r.content
+                run.bytes_downloaded = r.bytes_downloaded or 0
 
-            run.bytes_downloaded = (run.bytes_downloaded or 0) + (result.bytes_downloaded or 0)
+        # Parse the status report page to find the XLSX link
+        if not content:
+            self._log(f"Fetching SPP queue status report page: {QUEUE_PAGE}")
+            page = download_file(QUEUE_PAGE, timeout=15)
+            if page.success and page.content:
+                soup = BeautifulSoup(page.text, "html.parser")
+                for a in soup.find_all("a", href=True):
+                    href = str(a["href"])
+                    if ".xlsx" in href.lower() or ".xls" in href.lower():
+                        if any(kw in href.lower() for kw in ["interconnect", "queue", "gi", "gisr", "status"]):
+                            full = urljoin(QUEUE_PAGE, href)
+                            r = download_file(full, timeout=25)
+                            if r.success and r.content:
+                                content = r.content
+                                xlsx_url = full
+                                run.bytes_downloaded = r.bytes_downloaded or 0
+                                break
+                if not content:
+                    # Try any XLSX link on the page
+                    for a in soup.find_all("a", href=True):
+                        href = str(a["href"])
+                        if ".xlsx" in href.lower():
+                            full = urljoin(QUEUE_PAGE, href)
+                            r = download_file(full, timeout=25)
+                            if r.success and r.content:
+                                content = r.content
+                                xlsx_url = full
+                                run.bytes_downloaded = r.bytes_downloaded or 0
+                                break
 
-            try:
-                page_projects, page_docs = self._parse_page(result.text or "", url)
-                projects.extend(page_projects)
-                docs.extend(page_docs)
-            except Exception as e:
-                self._log(f"SPP page parse error for {url}: {e}")
+        # Try the OPS portal
+        if not content:
+            self._log(f"Trying SPP OPS portal: {QUEUE_PORTAL}")
+            r = download_file(QUEUE_PORTAL, timeout=15)
+            if r.success and r.content:
+                soup = BeautifulSoup(r.text, "html.parser")
+                for a in soup.find_all("a", href=True):
+                    href = str(a["href"])
+                    if ".xlsx" in href.lower() or ".csv" in href.lower():
+                        full = urljoin(QUEUE_PORTAL, href)
+                        r2 = download_file(full, timeout=25)
+                        if r2.success and r2.content:
+                            content = r2.content
+                            xlsx_url = full
+                            run.bytes_downloaded = r2.bytes_downloaded or 0
+                            break
 
-        # Save docs
-        if self.db:
-            for doc in docs:
-                try:
-                    self.db.upsert_filing_document(doc)
-                except Exception:
-                    pass
+        if not content:
+            self._log("SPP queue download failed")
+            return [], self._finish_run(ScraperStatus.FAILED, "Could not download SPP GI queue file")
 
-        run.projects_found = len(projects)
-        run.filings_found = len(docs)
-        run.fields_produced = ["project_name", "mw_requested", "state", "confidence", "source_url"]
-        self._log(f"SPP: {len(projects)} projects, {len(docs)} docs")
+        self._log(f"Downloaded {run.bytes_downloaded:,} bytes from {xlsx_url}")
 
-        status = ScraperStatus.PARTIAL if not projects else ScraperStatus.SUCCESS
+        try:
+            projects = self._parse_queue_file(content, xlsx_url or QUEUE_PAGE)
+            run.projects_found = len(projects)
+            run.fields_produced = ["queue_id", "project_name", "mw_requested", "state",
+                                   "county", "substation", "in_service_date", "queue_date", "confidence"]
+            self._log(f"Found {len(projects)} SPP load projects >=100 MW")
+            status = ScraperStatus.SUCCESS if projects else ScraperStatus.PARTIAL
+        except Exception as e:
+            logger.exception(f"SPP parse error: {e}")
+            run.error_message = str(e)
+            status = ScraperStatus.FAILED
+
         return projects, self._finish_run(status)
 
-    def _parse_page(self, html: str, page_url: str) -> tuple[list[Project], list[dict]]:
-        projects = []
-        docs = []
-        now = datetime.utcnow()
-
-        soup = BeautifulSoup(html, "html.parser")
-
-        # Look for links to PDFs/spreadsheets
-        for link in soup.find_all("a", href=True):
-            href = link.get("href", "")
-            text = link.get_text().strip()
-            full_url = urljoin(page_url, href) if not href.startswith("http") else href
-
-            if "spp.org" not in full_url and not full_url.startswith(page_url[:30]):
-                continue
-
-            lower = (text + href).lower()
-            is_relevant = any(kw in lower for kw in [
-                "large load", "hill", "provisional", "interconnection queue",
-                "load list", "data center"
-            ])
-
-            if href.lower().endswith((".pdf", ".xlsx", ".xls")) and is_relevant:
-                doc = {
-                    "doc_id": f"spp_{abs(hash(full_url)) % 1000000}",
-                    "docket_id": "SPP-LARGE-LOAD",
-                    "title": text or href.split("/")[-1],
-                    "url": full_url,
-                    "pdf_parsed": False,
-                    "has_project_table": False,
-                    "keywords_found": [kw for kw in ["large load", "hill", "provisional"]
-                                       if kw in lower],
-                    "retrieved_at": now.isoformat(),
-                }
-                docs.append(doc)
-
-                # Try to parse
-                try:
-                    dl = download_file(full_url, timeout=45)
-                    if dl.success and dl.content:
-                        if href.lower().endswith(".pdf"):
-                            file_projects = self._parse_pdf(dl.content, full_url)
-                        else:
-                            file_projects = self._parse_xlsx(dl.content, full_url)
-                        projects.extend(file_projects)
-                        doc["pdf_parsed"] = True
-                        doc["has_project_table"] = len(file_projects) > 0
-                except Exception as e:
-                    self._log(f"Could not parse {full_url}: {e}")
-
-        # Check for inline tables
-        for table in soup.find_all("table"):
-            table_text = table.get_text().lower()
-            if "mw" in table_text and ("load" in table_text or "project" in table_text):
-                inline_projects = self._parse_html_table(table, page_url)
-                projects.extend(inline_projects)
-
-        return projects, docs
-
-    def _parse_pdf(self, content: bytes, source_url: str) -> list[Project]:
-        projects = []
-        now = datetime.utcnow()
-        tables = extract_pdf_tables(content)
-        for df in tables:
-            cols_lower = {str(c).lower(): c for c in df.columns}
-            mw_col = next((v for k, v in cols_lower.items() if "mw" in k), None)
-            if not mw_col:
-                continue
-            for _, row in df.iterrows():
-                mw = self.parse_mw(row.get(mw_col))
-                if mw and mw >= 100:
-                    name_col = next((v for k, v in cols_lower.items()
-                                     if any(kw in k for kw in ["name", "project", "customer"])), None)
-                    name = str(row.get(name_col, "")).strip() if name_col else None
-                    if name in ("nan", "None", ""):
-                        name = None
-                    projects.append(Project(
-                        iso="SPP",
-                        project_name=name or f"SPP Large Load ({mw:.0f} MW)",
-                        category=self.classify_category(name or ""),
-                        status=ProjectStatus.ACTIVE,
-                        mw_requested=mw,
-                        mw_definition="MW from SPP large load PDF",
-                        source_url=source_url,
-                        source_name="SPP Large Load Document",
-                        source_iso="SPP",
-                        confidence=ConfidenceLevel.LOW,
-                        last_checked=now,
-                    ))
-        return projects
-
-    def _parse_xlsx(self, content: bytes, source_url: str) -> list[Project]:
-        import io
-        import pandas as pd
-        projects = []
-        now = datetime.utcnow()
+    def _parse_queue_file(self, content: bytes, source_url: str) -> list[Project]:
         try:
-            xl = pd.ExcelFile(io.BytesIO(content), engine="openpyxl")
-            for sheet in xl.sheet_names:
-                df = xl.parse(sheet)
-                cols_lower = {str(c).lower(): c for c in df.columns}
-                mw_col = next((v for k, v in cols_lower.items() if "mw" in k), None)
-                if not mw_col:
-                    continue
-                for _, row in df.iterrows():
-                    mw = self.parse_mw(row.get(mw_col))
-                    if mw and mw >= 100:
-                        name_col = next((v for k, v in cols_lower.items()
-                                         if any(kw in k for kw in ["name", "project", "customer"])), None)
-                        name = str(row.get(name_col, "")).strip() if name_col else None
-                        if name in ("nan", "None", ""):
-                            name = None
-                        state_col = next((v for k, v in cols_lower.items() if "state" in k), None)
-                        state = str(row.get(state_col, "")).strip()[:2].upper() if state_col else None
-                        if state in ("nan", "None", ""):
-                            state = None
-                        projects.append(Project(
-                            iso="SPP",
-                            project_name=name or f"SPP Large Load ({mw:.0f} MW)",
-                            category=self.classify_category(name or ""),
-                            status=ProjectStatus.ACTIVE,
-                            mw_requested=mw,
-                            state=state,
-                            source_url=source_url,
-                            source_name="SPP Large Load Spreadsheet",
-                            source_iso="SPP",
-                            confidence=ConfidenceLevel.MEDIUM,
-                            last_checked=now,
-                        ))
-        except Exception as e:
-            self._log(f"SPP XLSX parse error: {e}")
-        return projects
-
-    def _parse_html_table(self, table, source_url: str) -> list[Project]:
-        import pandas as pd
-        projects = []
-        now = datetime.utcnow()
-        try:
-            dfs = pd.read_html(str(table))
-            for df in dfs:
-                cols_lower = {str(c).lower(): c for c in df.columns}
-                mw_col = next((v for k, v in cols_lower.items() if "mw" in k), None)
-                if not mw_col:
-                    continue
-                for _, row in df.iterrows():
-                    mw = self.parse_mw(row.get(mw_col))
-                    if mw and mw >= 100:
-                        projects.append(Project(
-                            iso="SPP",
-                            project_name=f"SPP Large Load ({mw:.0f} MW)",
-                            mw_requested=mw,
-                            status=ProjectStatus.ACTIVE,
-                            state=None,
-                            source_url=source_url,
-                            source_name="SPP Large Loads Page",
-                            source_iso="SPP",
-                            confidence=ConfidenceLevel.LOW,
-                            last_checked=now,
-                        ))
+            return self._parse_xlsx(content, source_url)
         except Exception:
             pass
+        try:
+            return self._parse_csv(content, source_url)
+        except Exception as e:
+            raise ValueError(f"Could not parse SPP file: {e}")
+
+    def _parse_xlsx(self, content: bytes, source_url: str) -> list[Project]:
+        xl = pd.ExcelFile(io.BytesIO(content), engine="openpyxl")
+        self._log(f"SPP XLSX sheets: {xl.sheet_names}")
+        for sheet in xl.sheet_names:
+            sl = sheet.lower()
+            if any(kw in sl for kw in ["active", "queue", "all", "gi", "request"]):
+                try:
+                    df = xl.parse(sheet, header=0)
+                    if _find_col(df, COLUMN_MAP["mw"]):
+                        ps = self._rows_to_projects(df, source_url)
+                        if ps or len(df) > 50:
+                            return ps
+                except Exception:
+                    continue
+        for sheet in xl.sheet_names:
+            try:
+                df = xl.parse(sheet, header=0)
+                if _find_col(df, COLUMN_MAP["mw"]):
+                    return self._rows_to_projects(df, source_url)
+            except Exception:
+                continue
+        return []
+
+    def _parse_csv(self, content: bytes, source_url: str) -> list[Project]:
+        for enc in ["utf-8", "latin-1", "cp1252"]:
+            try:
+                df = pd.read_csv(io.BytesIO(content), encoding=enc)
+                return self._rows_to_projects(df, source_url)
+            except Exception:
+                continue
+        return []
+
+    def _rows_to_projects(self, df: pd.DataFrame, source_url: str) -> list[Project]:
+        projects = []
+        now = datetime.utcnow()
+
+        type_col   = _find_col(df, COLUMN_MAP["fuel_type"])
+        mw_col     = _find_col(df, COLUMN_MAP["mw"])
+        queue_col  = _find_col(df, COLUMN_MAP["queue_id"])
+        name_col   = _find_col(df, COLUMN_MAP["project_name"])
+        state_col  = _find_col(df, COLUMN_MAP["state"])
+        county_col = _find_col(df, COLUMN_MAP["county"])
+        sub_col    = _find_col(df, COLUMN_MAP["substation"])
+        util_col   = _find_col(df, COLUMN_MAP["utility"])
+        date_col   = _find_col(df, COLUMN_MAP["in_service"])
+        qdate_col  = _find_col(df, COLUMN_MAP["queue_date"])
+        status_col = _find_col(df, COLUMN_MAP["status"])
+
+        self._log(f"SPP cols: mw={mw_col} type={type_col} name={name_col} state={state_col}")
+        if not mw_col:
+            return projects
+
+        for _, row in df.iterrows():
+            try:
+                type_val = str(row.get(type_col, "") if type_col else "").strip().lower()
+                if type_col and type_val not in ("", "nan", "none"):
+                    if not any(lv in type_val for lv in LOAD_TYPES):
+                        continue
+
+                mw = self.parse_mw(row.get(mw_col))
+                if mw is None or mw < 100:
+                    continue
+
+                queue_id = _clean(row, queue_col)
+                project_name = _clean(row, name_col) or f"SPP Load {queue_id or '?'}"
+                state_raw = _clean(row, state_col) or ""
+                state = state_raw[:2].upper() if state_raw else None
+                county = _clean(row, county_col)
+                substation = _clean(row, sub_col)
+                utility = _clean(row, util_col)
+                in_service = self.parse_date(row.get(date_col) if date_col else None)
+                queue_date = self.parse_date(row.get(qdate_col) if qdate_col else None)
+
+                status_raw = (_clean(row, status_col) or "").lower()
+                if "withdraw" in status_raw or "cancel" in status_raw:
+                    proj_status = ProjectStatus.WITHDRAWN
+                elif "complet" in status_raw or "oper" in status_raw:
+                    proj_status = ProjectStatus.COMPLETED
+                else:
+                    proj_status = ProjectStatus.ACTIVE
+
+                projects.append(Project(
+                    iso="SPP",
+                    queue_id=queue_id,
+                    project_name=project_name,
+                    category=self.classify_category(project_name),
+                    status=proj_status,
+                    mw_requested=mw,
+                    mw_definition="MW from SPP GI Queue",
+                    in_service_date=in_service,
+                    queue_date=queue_date,
+                    state=state,
+                    county=county,
+                    substation=substation,
+                    poi_text=substation,
+                    utility=utility,
+                    source_url=source_url,
+                    source_name="SPP Generator Interconnection Queue",
+                    source_iso="SPP",
+                    confidence=ConfidenceLevel.HIGH if substation else ConfidenceLevel.MEDIUM,
+                    last_checked=now,
+                ))
+            except Exception:
+                continue
         return projects

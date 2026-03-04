@@ -1,4 +1,4 @@
-"""CAISO Generator Interconnection Queue scraper."""
+"""ISO-NE Generator Interconnection Queue scraper."""
 from __future__ import annotations
 
 import io
@@ -17,32 +17,31 @@ from src.utils.downloader import download_file
 
 logger = logging.getLogger(__name__)
 
-# CAISO maintains a permalink to the current queue XLSX
-QUEUE_URLS = [
-    "https://www.caiso.com/Documents/GeneratorInterconnectionQueue.xlsx",
-    "https://www.caiso.com/documents/current-generator-interconnection-queue.xlsx",
-]
-QUEUE_PAGE = "https://www.caiso.com/generation-transmission/interconnection/generator-interconnection/generator-interconnection-queue"
+QUEUE_URL  = "https://www.iso-ne.com/static-assets/documents/100002/intercon_queue.xlsx"
+QUEUE_PAGE = "https://www.iso-ne.com/interconnection/interconnection-request/interconnection-queue"
 
 COLUMN_MAP = {
-    "queue_id":     ["Queue Position", "Application#", "Queue #", "Queue ID", "App #"],
-    "project_name": ["Project Name", "Name", "Applicant", "Entity"],
-    "fuel_type":    ["Fuel", "Resource Type", "Technology", "Type"],
-    "mw":           ["Net MW", "MW AC", "Capacity (MW)", "MW", "Net Capacity"],
-    "county":       ["County", "Location County"],
-    "state":        ["State", "Location State"],
-    "substation":   ["Point of Interconnection", "Substation", "POI", "Station"],
+    "queue_id":     ["Queue Position", "Project Number", "Queue #", "Project No",
+                     "Request Number", "Queue No"],
+    "project_name": ["Project Name", "Name", "Applicant", "Entity", "Project"],
+    "fuel_type":    ["Resource Type", "Fuel", "Technology", "Type", "Fuel Type"],
+    "mw":           ["Capacity (MW)", "Net MW", "MW", "Summer MW", "Net Capacity (MW)",
+                     "Proposed Capacity (MW)"],
+    "state":        ["State"],
+    "town":         ["Town", "Town/City", "Municipality", "County", "Location"],
+    "substation":   ["Station", "Interconnection Substation", "Substation",
+                     "Point of Interconnection", "POI"],
     "utility":      ["Transmission Owner", "TO", "Zone", "Utility"],
-    "in_service":   ["Proposed On-line Date", "COD", "Commercial Operation Date",
-                     "Proposed COD", "In Service Date"],
-    "queue_date":   ["Application Date", "Queue Date", "Date Received", "Received"],
+    "in_service":   ["Proposed In-Service Date", "COD", "Commercial Operation Date",
+                     "In Service Date", "Proposed COD"],
+    "queue_date":   ["Date of Application", "Queue Date", "Application Date",
+                     "Received Date", "Date Received"],
     "voltage":      ["Voltage (kV)", "kV", "Voltage"],
-    "status":       ["Status", "Queue Status", "Application Status"],
+    "status":       ["Status", "Queue Status", "Project Status"],
 }
 
-# CAISO uses "DL" for Demand Load, and other demand-related values
-LOAD_TYPES = {"dl", "demand load", "demand", "load", "dr", "demand response",
-              "demand resource", "distributed load"}
+LOAD_TYPES = {"dr", "demand resource", "demand response", "load", "demand",
+              "demand resource - behind the meter", "l"}
 
 
 def _find_col(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
@@ -64,97 +63,82 @@ def _clean(row, col) -> Optional[str]:
     return None if v in ("", "nan", "None", "NaT") else v
 
 
-class CAISOScraper(BaseScraper):
-    source_key = "caiso"
-    source_name = "CAISO Generator Interconnection Queue"
-    iso = "CAISO"
+class ISONEScraper(BaseScraper):
+    source_key = "iso_ne"
+    source_name = "ISO-NE Generator Interconnection Queue"
+    iso = "ISO-NE"
 
     def run(self) -> tuple[list[Project], ScraperRun]:
         run = self._new_run()
         projects = []
 
-        content = None
-        xlsx_url = self.config.get("queue_url", "")
+        queue_url = self.config.get("queue_url", QUEUE_URL)
+        self._log(f"Downloading ISO-NE queue XLSX from {queue_url}")
 
-        # Try direct download URLs
-        for url in ([xlsx_url] if xlsx_url else []) + QUEUE_URLS:
-            self._log(f"Trying CAISO queue URL: {url}")
-            r = download_file(url, timeout=30)
-            if r.success and r.content:
-                content = r.content
-                xlsx_url = url
-                run.bytes_downloaded = r.bytes_downloaded or 0
-                run.content_hash = r.content_hash
-                break
+        result = download_file(queue_url, timeout=25)
 
-        # Fall back to page parsing
-        if not content:
-            self._log(f"Fetching CAISO queue page: {QUEUE_PAGE}")
+        if not result.success or not result.content:
+            self._log(f"Direct download failed ({result.error}), trying page discovery...")
             page = download_file(QUEUE_PAGE, timeout=15)
             if page.success and page.content:
                 soup = BeautifulSoup(page.text, "html.parser")
                 for a in soup.find_all("a", href=True):
                     href = str(a["href"])
-                    if ".xlsx" in href.lower() and ("queue" in href.lower() or "interconnection" in href.lower()):
+                    if ".xlsx" in href.lower() and "queue" in href.lower():
                         full = urljoin(QUEUE_PAGE, href)
-                        r = download_file(full, timeout=30)
-                        if r.success and r.content:
-                            content = r.content
-                            xlsx_url = full
-                            run.bytes_downloaded = r.bytes_downloaded or 0
+                        result = download_file(full, timeout=25)
+                        if result.success:
+                            queue_url = full
                             break
 
-        if not content:
-            self._log("CAISO queue download failed")
-            return [], self._finish_run(ScraperStatus.FAILED, "Could not download CAISO queue XLSX")
+        if not result.success or not result.content:
+            self._log(f"ISO-NE queue download failed: {result.error}")
+            return [], self._finish_run(ScraperStatus.FAILED, result.error)
 
-        self._log(f"Downloaded {run.bytes_downloaded:,} bytes from {xlsx_url}")
+        run.content_hash = result.content_hash
+        run.bytes_downloaded = result.bytes_downloaded or 0
+        self._log(f"Downloaded {run.bytes_downloaded:,} bytes (cache={result.from_cache})")
 
         try:
-            projects = self._parse_queue_xlsx(content, xlsx_url)
+            projects = self._parse_queue_xlsx(result.content, queue_url)
             run.projects_found = len(projects)
             run.fields_produced = ["queue_id", "project_name", "mw_requested", "state",
                                    "county", "substation", "in_service_date", "queue_date", "confidence"]
-            self._log(f"Found {len(projects)} CAISO demand/load projects >=100 MW")
+            self._log(f"Found {len(projects)} ISO-NE demand/load projects >=100 MW")
             status = ScraperStatus.SUCCESS if projects else ScraperStatus.PARTIAL
         except Exception as e:
-            logger.exception(f"CAISO parse error: {e}")
+            logger.exception(f"ISO-NE parse error: {e}")
             run.error_message = str(e)
             status = ScraperStatus.FAILED
 
         return projects, self._finish_run(status)
 
     def _parse_queue_xlsx(self, content: bytes, source_url: str) -> list[Project]:
-        projects = []
         xl = pd.ExcelFile(io.BytesIO(content), engine="openpyxl")
-        self._log(f"CAISO XLSX sheets: {xl.sheet_names}")
+        self._log(f"ISO-NE XLSX sheets: {xl.sheet_names}")
 
         for sheet in xl.sheet_names:
             sl = sheet.lower()
             if any(kw in sl for kw in ["active", "queue", "all", "gen"]):
                 try:
                     df = xl.parse(sheet, header=0)
-                    if len(df) > 5 and _find_col(df, COLUMN_MAP["mw"]):
-                        self._log(f"Using sheet '{sheet}' ({len(df)} rows)")
+                    if _find_col(df, COLUMN_MAP["mw"]):
                         ps = self._rows_to_projects(df, source_url)
-                        if ps or len(df) > 100:
-                            projects.extend(ps)
-                            break
+                        if ps or len(df) > 50:
+                            return ps
                 except Exception as e:
                     self._log(f"Sheet '{sheet}' error: {e}")
 
-        if not projects:
-            for sheet in xl.sheet_names:
-                try:
-                    df = xl.parse(sheet, header=0)
-                    if _find_col(df, COLUMN_MAP["mw"]):
-                        ps = self._rows_to_projects(df, source_url)
-                        if ps:
-                            projects.extend(ps)
-                            break
-                except Exception:
-                    continue
-        return projects
+        for sheet in xl.sheet_names:
+            try:
+                df = xl.parse(sheet, header=0)
+                if _find_col(df, COLUMN_MAP["mw"]):
+                    ps = self._rows_to_projects(df, source_url)
+                    if ps:
+                        return ps
+            except Exception:
+                continue
+        return []
 
     def _rows_to_projects(self, df: pd.DataFrame, source_url: str) -> list[Project]:
         projects = []
@@ -165,14 +149,14 @@ class CAISOScraper(BaseScraper):
         queue_col  = _find_col(df, COLUMN_MAP["queue_id"])
         name_col   = _find_col(df, COLUMN_MAP["project_name"])
         state_col  = _find_col(df, COLUMN_MAP["state"])
-        county_col = _find_col(df, COLUMN_MAP["county"])
+        town_col   = _find_col(df, COLUMN_MAP["town"])
         sub_col    = _find_col(df, COLUMN_MAP["substation"])
         util_col   = _find_col(df, COLUMN_MAP["utility"])
         date_col   = _find_col(df, COLUMN_MAP["in_service"])
         qdate_col  = _find_col(df, COLUMN_MAP["queue_date"])
         status_col = _find_col(df, COLUMN_MAP["status"])
 
-        self._log(f"CAISO cols: mw={mw_col} type={type_col} name={name_col}")
+        self._log(f"ISO-NE cols: mw={mw_col} type={type_col} name={name_col} state={state_col}")
         if not mw_col:
             return projects
 
@@ -188,10 +172,11 @@ class CAISOScraper(BaseScraper):
                     continue
 
                 queue_id = _clean(row, queue_col)
-                project_name = _clean(row, name_col) or f"CAISO Load {queue_id or '?'}"
-                state_raw = _clean(row, state_col) or "CA"
-                state = state_raw[:2].upper() if state_raw else "CA"
-                county = _clean(row, county_col)
+                project_name = _clean(row, name_col) or f"ISO-NE Load {queue_id or '?'}"
+                state_raw = _clean(row, state_col) or ""
+                state = state_raw[:2].upper() if state_raw else None
+                # ISO-NE uses "town" not county; store in county field
+                county = _clean(row, town_col)
                 substation = _clean(row, sub_col)
                 utility = _clean(row, util_col)
                 in_service = self.parse_date(row.get(date_col) if date_col else None)
@@ -206,13 +191,13 @@ class CAISOScraper(BaseScraper):
                     proj_status = ProjectStatus.ACTIVE
 
                 projects.append(Project(
-                    iso="CAISO",
+                    iso="ISO-NE",
                     queue_id=queue_id,
                     project_name=project_name,
                     category=self.classify_category(project_name),
                     status=proj_status,
                     mw_requested=mw,
-                    mw_definition="Net MW from CAISO GI Queue",
+                    mw_definition="Capacity MW from ISO-NE interconnection queue",
                     in_service_date=in_service,
                     queue_date=queue_date,
                     state=state,
@@ -221,8 +206,8 @@ class CAISOScraper(BaseScraper):
                     poi_text=substation,
                     utility=utility,
                     source_url=source_url,
-                    source_name="CAISO Generator Interconnection Queue",
-                    source_iso="CAISO",
+                    source_name="ISO-NE Generator Interconnection Queue",
+                    source_iso="ISO-NE",
                     confidence=ConfidenceLevel.HIGH if substation else ConfidenceLevel.MEDIUM,
                     last_checked=now,
                 ))
