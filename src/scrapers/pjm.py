@@ -280,9 +280,9 @@ class PJMScraper(BaseScraper):
         projects = []
         docs = []
 
-        for page_url in LARGE_LOAD_SEARCH_PAGES:
+        for page_url in LARGE_LOAD_SEARCH_PAGES[:2]:
             try:
-                result = download_file(page_url, timeout=30)
+                result = download_file(page_url, timeout=10)
                 if not result.success or not result.content:
                     continue
 

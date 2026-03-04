@@ -58,7 +58,7 @@ class DownloadResult:
         return None
 
 
-def _make_session(retries: int = 3, backoff_factor: float = 1.0) -> requests.Session:
+def _make_session(retries: int = 1, backoff_factor: float = 0.3) -> requests.Session:
     session = requests.Session()
     retry = Retry(
         total=retries,
@@ -106,7 +106,7 @@ def _save_etag_cache(cache: dict):
 
 def download_file(
     url: str,
-    timeout: int = 60,
+    timeout: int = 20,
     use_cache: bool = True,
     force_refresh: bool = False,
     max_size_mb: int = 100,

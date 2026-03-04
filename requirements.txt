@@ -27,8 +27,9 @@ pydantic-settings>=2.1.0
 # Deduplication
 rapidfuzz>=3.6.0
 
-# Mapping
+# Mapping + charting
 pydeck>=0.8.0
+plotly>=5.18.0
 
 # YAML config
 pyyaml>=6.0.1

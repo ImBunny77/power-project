@@ -127,7 +127,19 @@ def load_ferc_dockets() -> pd.DataFrame:
 
 # ── Refresh pipeline ──────────────────────────────────────────────────────────
 def is_refresh_running() -> bool:
-    return Path(LOCK_FILE).exists()
+    p = Path(LOCK_FILE)
+    if not p.exists():
+        return False
+    # Auto-clear stale lock file older than 8 minutes
+    import os
+    age = time.time() - os.path.getmtime(p)
+    if age > 480:
+        try:
+            p.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False
+    return True
 
 
 def trigger_refresh(force: bool = False):
@@ -513,6 +525,131 @@ def _render_project_detail(row: pd.Series):
 
     if row.get("notes"):
         st.info(f"📝 Notes: {row['notes']}")
+
+
+# ── Page: Timeline ────────────────────────────────────────────────────────────
+def page_timeline(filters: dict):
+    st.header("📅 Project Timeline")
+    st.caption("Gantt chart of every project: queue entry → expected in-service date, grouped by ISO.")
+
+    try:
+        import plotly.express as px
+    except ImportError:
+        st.error("plotly not installed. Run: pip install plotly")
+        return
+
+    df = load_projects(
+        iso=filters.get("iso"),
+        state=filters.get("state"),
+        category=filters.get("category"),
+        status=filters.get("status"),
+        min_mw=filters.get("min_mw", MIN_MW),
+        max_mw=filters.get("max_mw"),
+    )
+
+    if filters.get("isos") and len(filters["isos"]) > 1 and not df.empty:
+        df = df[df["iso"].isin(filters["isos"])]
+    if filters.get("states") and len(filters["states"]) > 1 and not df.empty:
+        df = df[df["state"].isin(filters["states"])]
+
+    if df.empty:
+        st.info("No projects to display. Run a refresh first.")
+        return
+
+    today = pd.Timestamp.now()
+    tl = df.copy()
+
+    # Parse dates
+    tl["start"] = pd.to_datetime(tl["queue_date"], errors="coerce")
+    tl["end"]   = pd.to_datetime(tl["in_service_date"], errors="coerce")
+
+    # For projects missing a start date, use today minus a few months as placeholder
+    no_start = tl["start"].isna()
+    tl.loc[no_start, "start"] = today - pd.DateOffset(months=3)
+
+    # For projects missing an end date, show a 6-month stub bar
+    no_end = tl["end"].isna()
+    tl.loc[no_end, "end"] = tl.loc[no_end, "start"] + pd.DateOffset(months=6)
+
+    # Drop projects where bar would be zero-length or reversed
+    tl = tl[tl["end"] > tl["start"]]
+
+    # Clamp very old start dates (keep last 5 years)
+    min_date = today - pd.DateOffset(years=5)
+    tl["start"] = tl["start"].clip(lower=min_date)
+
+    if tl.empty:
+        st.info("No timeline data available (projects need queue_date or in_service_date).")
+        return
+
+    # Build label column: name + MW
+    def _label(row):
+        mw = row.get("mw_requested")
+        name = row.get("project_name") or "Unknown"
+        return f"{name} ({int(mw):,} MW)" if mw else name
+
+    tl["label"] = tl.apply(_label, axis=1)
+
+    # Sort: ISO → end date
+    tl = tl.sort_values(["iso", "end"], ascending=[True, True]).reset_index(drop=True)
+
+    # ISO color palette
+    iso_colors = {
+        "NYISO": "#1f6feb", "PJM": "#e36c09", "MISO": "#7030a0",
+        "SPP": "#00b050", "CAISO": "#c00000", "ERCOT": "#ff9900", "ISO-NE": "#00b0f0",
+    }
+
+    fig = px.timeline(
+        tl,
+        x_start="start",
+        x_end="end",
+        y="label",
+        color="iso",
+        color_discrete_map=iso_colors,
+        hover_data={
+            "mw_requested": ":.0f",
+            "state": True,
+            "county": True,
+            "category": True,
+            "confidence": True,
+            "status": True,
+            "start": False,
+            "end": False,
+        },
+        labels={"label": "Project", "iso": "ISO/RTO", "mw_requested": "MW"},
+        title="",
+    )
+
+    chart_height = max(450, len(tl) * 28)
+    fig.update_layout(
+        height=chart_height,
+        yaxis={"autorange": "reversed", "title": ""},
+        xaxis_title="Date",
+        legend_title="ISO/RTO",
+        margin={"l": 10, "r": 10, "t": 10, "b": 40},
+    )
+    # Add a vertical line for today
+    fig.add_vline(
+        x=today.timestamp() * 1000,
+        line_dash="dash", line_color="gray",
+        annotation_text="Today", annotation_position="top right",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Summary table below chart
+    st.subheader("Summary by ISO")
+    summary = (
+        tl.groupby("iso")
+        .agg(projects=("label", "count"), total_mw=("mw_requested", "sum"))
+        .reset_index()
+        .sort_values("total_mw", ascending=False)
+    )
+    summary["total_mw"] = summary["total_mw"].apply(lambda x: f"{x:,.0f}")
+    st.dataframe(
+        summary.rename(columns={"iso": "ISO", "projects": "Projects", "total_mw": "Total MW"}),
+        use_container_width=True, hide_index=True,
+    )
 
 
 # ── Page: Map ─────────────────────────────────────────────────────────────────
@@ -915,9 +1052,10 @@ def main():
     filters = render_sidebar()
 
     # Navigation tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📊 Dashboard",
         "📋 Projects Table",
+        "📅 Timeline",
         "🗺️ Map",
         "📄 Filings",
         "⚙️ Sources",
@@ -930,12 +1068,15 @@ def main():
         page_projects_table(filters)
 
     with tab3:
-        page_map(filters)
+        page_timeline(filters)
 
     with tab4:
-        page_filings()
+        page_map(filters)
 
     with tab5:
+        page_filings()
+
+    with tab6:
         page_sources()
 
 
