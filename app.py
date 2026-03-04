@@ -536,24 +536,26 @@ def page_map(filters: dict):
         st.info("No projects to display. Run a refresh first.")
         return
 
-    # Filter to rows with coordinates
+    # Geocode from county/state centroids for rows without coordinates
+    from src.utils.geocoder import geocode_projects_inplace
+    df = df.copy()
+    geocode_projects_inplace(df, db=get_db())
+
     map_df = df[
         df["latitude"].notna() & df["longitude"].notna() &
         (df["latitude"] != 0) & (df["longitude"] != 0)
     ].copy()
 
+    no_coords = len(df) - len(map_df)
+    if no_coords:
+        st.caption(f"ℹ️ {len(map_df)} of {len(df)} projects mapped (county centroid estimates). "
+                   f"{no_coords} project(s) have no state/county info and are not shown.")
+
     if map_df.empty:
-        st.warning(
-            f"No projects have geocoordinates yet. "
-            f"{len(df)} projects are in the table but lack lat/lon. "
-            "Coordinates are only populated when source data includes them. "
-            "You can enable geocoding in config.yaml."
-        )
-        # Fall back to state-level aggregation
+        st.info("No location data available for any projects.")
         _render_state_map(df)
         return
 
-    st.write(f"Showing {len(map_df)} of {len(df)} projects (with coordinates)")
     _render_pydeck_map(map_df)
 
 
@@ -638,25 +640,64 @@ def _render_state_map(df: pd.DataFrame):
 def page_filings():
     st.header("📄 FERC Filings & Docket Tracker")
 
-    # Show dockets
+    # Merge DB dockets with configured dockets so the table is never empty
     dockets_df = load_ferc_dockets()
+    cfg_dockets = CONFIG.get("ferc_dockets", [])
 
+    # Build a display list: DB rows take precedence; fill gaps from config
+    db_ids = set(dockets_df["docket_id"].tolist()) if not dockets_df.empty else set()
+    extra_rows = []
+    for d in cfg_dockets:
+        if d.get("id") and d["id"] not in db_ids:
+            extra_rows.append({
+                "docket_id": d["id"],
+                "name": d.get("name", ""),
+                "url": d.get("url", ""),
+                "total_docs": "—",
+                "last_fetched": "Not yet fetched — click Refresh Now",
+                "keywords": ", ".join(d.get("search_keywords", [])),
+            })
+
+    # ISO source dockets always shown
+    iso_dockets = [
+        {"docket_id": "PJM-LARGE-LOAD",    "name": "PJM Large Load Documents",      "url": "https://www.pjm.com", "total_docs": "—", "last_fetched": "—", "keywords": "large load, data center"},
+        {"docket_id": "CAISO-LARGE-LOADS", "name": "CAISO Large Loads Initiative",  "url": "https://www.caiso.com/generation-transmission/load/large-load", "total_docs": "—", "last_fetched": "—", "keywords": "large load, issue paper"},
+        {"docket_id": "MISO-LARGE-LOADS",  "name": "MISO Large Loads Committee",    "url": "https://www.misoenergy.org/engage/committees/large-loads/", "total_docs": "—", "last_fetched": "—", "keywords": "large load, data center"},
+        {"docket_id": "SPP-LARGE-LOAD",    "name": "SPP HILL / Provisional Load",   "url": "https://www.spp.org", "total_docs": "—", "last_fetched": "—", "keywords": "HILL, provisional, large load"},
+        {"docket_id": "ERCOT-LARGE-LOAD",  "name": "ERCOT Large Load Integration",  "url": "https://www.ercot.com/services/rq/large-load-integration", "total_docs": "—", "last_fetched": "—", "keywords": "large load, LLI"},
+    ]
+    for d in iso_dockets:
+        if d["docket_id"] not in db_ids:
+            extra_rows.append(d)
+
+    combined_rows = []
     if not dockets_df.empty:
-        st.subheader("Tracked Dockets")
-        st.dataframe(
-            dockets_df[["docket_id", "name", "url", "total_docs", "last_fetched"]].rename(columns={
-                "docket_id": "Docket ID",
-                "name": "Name",
-                "url": "URL",
-                "total_docs": "# Docs",
-                "last_fetched": "Last Fetched",
-            }),
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.info("No dockets tracked yet. Run a refresh to fetch FERC filings.")
+        for _, r in dockets_df.iterrows():
+            combined_rows.append({
+                "docket_id": r.get("docket_id", ""),
+                "name": r.get("name", ""),
+                "url": r.get("url", ""),
+                "total_docs": r.get("total_docs", 0),
+                "last_fetched": r.get("last_fetched", "—"),
+                "keywords": "",
+            })
+    combined_rows.extend(extra_rows)
+    all_dockets_df = pd.DataFrame(combined_rows)
 
+    st.subheader("Tracked Dockets")
+    st.dataframe(
+        all_dockets_df.rename(columns={
+            "docket_id": "Docket ID", "name": "Name", "url": "Source URL",
+            "total_docs": "# Docs", "last_fetched": "Last Fetched", "keywords": "Keywords",
+        }),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Source URL": st.column_config.LinkColumn("Source URL"),
+        },
+    )
+
+    st.caption("Click **🔄 Refresh Now** in the sidebar to fetch documents for all dockets.")
     st.divider()
 
     # Filing documents
@@ -664,12 +705,11 @@ def page_filings():
 
     col1, col2 = st.columns([1, 2])
     with col1:
-        docket_options = ["All"]
-        if not dockets_df.empty:
-            docket_options += dockets_df["docket_id"].tolist()
-        docket_options += ["PJM-LARGE-LOAD", "CAISO-LARGE-LOADS", "SPP-LARGE-LOAD",
-                           "MISO-LARGE-LOADS", "ERCOT-LARGE-LOAD"]
-        docket_filter = st.selectbox("Filter by Docket", docket_options, key="docket_filter")
+        all_docket_ids = sorted(set(all_dockets_df["Docket ID"].tolist()
+                                    if "Docket ID" in all_dockets_df.columns
+                                    else all_dockets_df["docket_id"].tolist()))
+        docket_filter = st.selectbox("Filter by Docket", ["All"] + all_docket_ids,
+                                     key="docket_filter")
     with col2:
         keyword_filter = st.text_input(
             "🔍 Keyword search",
@@ -683,7 +723,18 @@ def page_filings():
     )
 
     if docs_df.empty:
-        st.info("No filing documents yet. Run a refresh to fetch filings.")
+        st.info(
+            "No filing documents fetched yet. Click **🔄 Refresh Now** in the sidebar "
+            "to pull documents from all sources above."
+        )
+        # Show the direct links anyway
+        st.subheader("📎 Quick Links")
+        for _, row in all_dockets_df.iterrows():
+            docket_id = row.get("docket_id") or row.get("Docket ID", "")
+            name = row.get("name") or row.get("Name", "")
+            url = row.get("url") or row.get("Source URL", "")
+            if url and url != "—":
+                st.markdown(f"- **{docket_id}** — [{name}]({url})")
         return
 
     st.write(f"Found {len(docs_df)} documents")
@@ -836,11 +887,23 @@ the project is omitted.
 
 # ── Main App ──────────────────────────────────────────────────────────────────
 def main():
-    # Custom CSS
+    # CSS — explicit colors so text is always readable regardless of system dark/light mode
     st.markdown("""
     <style>
-    .stMetric { background: #f8f9fa; border-radius: 8px; padding: 8px; }
-    .stExpander { border: 1px solid #e0e0e0; }
+    [data-testid="stMetric"] {
+        background: #f0f4ff;
+        border-radius: 10px;
+        padding: 12px 16px;
+        border: 1px solid #d0daf0;
+    }
+    [data-testid="stMetricLabel"] p { color: #1a1a2e !important; font-weight: 600; }
+    [data-testid="stMetricValue"]   { color: #1f6feb !important; font-weight: 700; }
+    .stTabs [data-baseweb="tab"]    { color: #1a1a2e !important; font-weight: 500; }
+    .stTabs [aria-selected="true"]  { color: #1f6feb !important;
+                                      border-bottom: 2px solid #1f6feb; }
+    h1, h2, h3, h4                  { color: #1a1a2e !important; }
+    section[data-testid="stSidebar"] { background: #f7f9fc; }
+    .stExpander { border: 1px solid #dde3f0 !important; border-radius: 8px; }
     </style>
     """, unsafe_allow_html=True)
 
