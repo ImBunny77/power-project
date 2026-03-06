@@ -1,6 +1,6 @@
 {
-  "run_id": "98c624a6",
-  "started_at": "2026-03-06T17:47:26.365766",
+  "run_id": "814da9b2",
+  "started_at": "2026-03-06T19:24:22.621313",
   "sources_run": [
     {
       "source": "nyiso",
@@ -41,14 +41,19 @@
       "source": "ferc_filings",
       "status": "partial",
       "projects": 0
+    },
+    {
+      "source": "eia_860m",
+      "status": "success",
+      "projects": 2282
     }
   ],
-  "total_new": 1212,
-  "total_updated": 3884,
+  "total_new": 2282,
+  "total_updated": 5204,
   "total_removed": 0,
-  "total_projects": 5008,
+  "total_projects": 7290,
   "errors": [],
-  "finished_at": "2026-03-06T17:49:09.717531",
-  "duration_seconds": 103.351765,
+  "finished_at": "2026-03-06T19:28:31.112492",
+  "duration_seconds": 248.491179,
   "total_unchanged": 0
 }

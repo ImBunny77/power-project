@@ -34,6 +34,7 @@ from src.scrapers.miso import MISOScraper
 from src.scrapers.ercot import ERCOTScraper
 from src.scrapers.iso_ne import ISONEScraper
 from src.scrapers.ferc_filings import FERCFilingsScraper
+from src.scrapers.eia_860m import EIA860MScraper
 from src.storage.database import Database
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ SCRAPER_REGISTRY = {
     "ercot": ERCOTScraper,
     "iso_ne": ISONEScraper,
     "ferc_filings": FERCFilingsScraper,
+    "eia_860m": EIA860MScraper,
 }
 
 
