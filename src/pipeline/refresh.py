@@ -27,13 +27,9 @@ from src.models.project import Project
 from src.models.scraper_run import ScraperRun, ScraperStatus
 from src.pipeline.dedup import dedup_projects
 from src.scrapers.nyiso import NYISOScraper
-from src.scrapers.pjm import PJMScraper
 from src.scrapers.caiso import CAISOScraper
-from src.scrapers.spp import SPPScraper
 from src.scrapers.miso import MISOScraper
-from src.scrapers.ercot import ERCOTScraper
 from src.scrapers.iso_ne import ISONEScraper
-from src.scrapers.ferc_filings import FERCFilingsScraper
 from src.scrapers.eia_860m import EIA860MScraper
 from src.storage.database import Database
 
@@ -41,14 +37,10 @@ logger = logging.getLogger(__name__)
 
 SCRAPER_REGISTRY = {
     "nyiso": NYISOScraper,
-    "pjm": PJMScraper,
     "caiso": CAISOScraper,
-    "spp": SPPScraper,
     "miso": MISOScraper,
-    "ercot": ERCOTScraper,
     "iso_ne": ISONEScraper,
-    "ferc_filings": FERCFilingsScraper,
-    "eia_860m": EIA860MScraper,
+    "eia_860m": EIA860MScraper,  # Covers PJM, SPP, ERCOT
 }
 
 
