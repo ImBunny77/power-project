@@ -70,15 +70,16 @@ class MISOScraper(BaseScraper):
         run = self._new_run()
         projects = []
 
-        # 1) Try the JSON API endpoint first (bypasses 403 on page)
+        # 1) Try the JSON API endpoint first (works with plain requests)
         json_api = "https://www.misoenergy.org/api/giqueue/getprojects"
         self._log(f"Trying MISO JSON API: {json_api}")
         try:
-            import cloudscraper
-            scraper = cloudscraper.create_scraper(
-                browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
-            )
-            r = scraper.get(json_api, timeout=30)
+            import requests as req
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json',
+            }
+            r = req.get(json_api, headers=headers, timeout=30)
             if r.status_code == 200 and r.headers.get("content-type", "").startswith("application/json"):
                 data = r.json()
                 self._log(f"MISO API returned {len(data)} total projects")
@@ -87,13 +88,11 @@ class MISOScraper(BaseScraper):
                 run.projects_found = len(projects)
                 run.fields_produced = ["queue_id", "project_name", "mw_requested", "state",
                                        "county", "substation", "in_service_date", "queue_date", "confidence"]
-                self._log(f"Found {len(projects)} MISO projects ≥100 MW from API")
+                self._log(f"Found {len(projects)} MISO projects from API")
                 status = ScraperStatus.SUCCESS if projects else ScraperStatus.PARTIAL
                 if not projects:
-                    run.error_message = "MISO API returned data but no large load projects found"
+                    run.error_message = "MISO API returned data but no projects found"
                 return projects, self._finish_run(status)
-        except ImportError:
-            self._log("cloudscraper not installed, skipping API approach")
         except Exception as e:
             self._log(f"MISO API failed: {e}")
 

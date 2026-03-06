@@ -72,6 +72,36 @@ class ISONEScraper(BaseScraper):
         run = self._new_run()
         projects = []
 
+        # 1) Try the IRTT HTML endpoint (no bot protection, returns HTML table)
+        irtt_url = "https://irtt.iso-ne.com/reports/external"
+        self._log(f"Trying ISO-NE IRTT HTML endpoint: {irtt_url}")
+        try:
+            import requests as req
+            import warnings
+            warnings.filterwarnings("ignore", category=FutureWarning)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html',
+            }
+            r = req.get(irtt_url, headers=headers, timeout=30)
+            if r.status_code == 200 and len(r.content) > 10000:
+                self._log(f"IRTT returned {len(r.content):,} bytes — parsing HTML table")
+                run.bytes_downloaded = len(r.content)
+                tables = pd.read_html(r.text)
+                if tables and len(tables[0]) > 10:
+                    df = tables[0]
+                    self._log(f"IRTT table: {len(df)} rows, columns: {list(df.columns)[:8]}")
+                    projects = self._rows_to_projects(df, irtt_url)
+                    run.projects_found = len(projects)
+                    run.fields_produced = ["queue_id", "project_name", "mw_requested", "state",
+                                           "substation", "in_service_date", "confidence"]
+                    self._log(f"Found {len(projects)} ISO-NE projects from IRTT")
+                    status = ScraperStatus.SUCCESS if projects else ScraperStatus.PARTIAL
+                    return projects, self._finish_run(status)
+        except Exception as e:
+            self._log(f"IRTT parse failed: {e}")
+
+        # 2) Fall back to XLSX download
         queue_url = self.config.get("queue_url", QUEUE_URL)
         self._log(f"Downloading ISO-NE queue XLSX from {queue_url}")
 
@@ -92,7 +122,7 @@ class ISONEScraper(BaseScraper):
                             break
 
         if not result.success or not result.content:
-            msg = "ISO-NE queue URL returned 404. Download manually from iso-ne.com and upload via Sources tab."
+            msg = "ISO-NE queue: all download methods failed. Upload manually via Sources tab."
             self._log(msg)
             return [], self._finish_run(ScraperStatus.PARTIAL, msg)
 
@@ -105,7 +135,7 @@ class ISONEScraper(BaseScraper):
             run.projects_found = len(projects)
             run.fields_produced = ["queue_id", "project_name", "mw_requested", "state",
                                    "county", "substation", "in_service_date", "queue_date", "confidence"]
-            self._log(f"Found {len(projects)} ISO-NE demand/load projects >=100 MW")
+            self._log(f"Found {len(projects)} ISO-NE projects from XLSX")
             status = ScraperStatus.SUCCESS if projects else ScraperStatus.PARTIAL
         except Exception as e:
             logger.exception(f"ISO-NE parse error: {e}")
