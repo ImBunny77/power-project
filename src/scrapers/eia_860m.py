@@ -19,6 +19,7 @@ import requests
 
 from src.models import ConfidenceLevel, Project, ProjectStatus
 from src.scrapers.base import BaseScraper, ScraperRun, ScraperStatus
+from src.utils.downloader import download_file
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,7 @@ STATE_TO_ISO = {
     "WA": "CAISO", "WY": "SPP", "NV": "CAISO",
 }
 
-# ISOs we want to fill data for (only populate ISOs that don't have their own scraper working)
-TARGET_ISOS = {"PJM", "SPP", "ERCOT"}
+# Remove static TARGET_ISOS to allow dynamic filtering
 
 EIA_860M_URL_TEMPLATE = "https://www.eia.gov/electricity/data/eia860m/xls/{month}_generator{year}.xlsx"
 EIA_860M_ARCHIVE_TEMPLATE = "https://www.eia.gov/electricity/data/eia860m/archive/xls/{month}_generator{year}.xlsx"
@@ -64,25 +64,27 @@ class EIA860MScraper(BaseScraper):
     iso = "EIA"  # Multi-ISO source
 
     def _find_latest_url(self) -> Optional[str]:
-        """Find the most recent EIA-860M file URL."""
+        """Find the most recent EIA-860M file URL by checking for a valid XLSX header."""
         now = datetime.utcnow()
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
+        headers = {'User-Agent': 'python-requests/2.31.0'}
         
         # Try current year first, then previous year
         for year in [now.year, now.year - 1]:
             months_to_try = list(range(now.month - 1, -1, -1)) if year == now.year else list(range(11, -1, -1))
             for month_idx in months_to_try:
                 month_name = MONTHS[month_idx]
-                # Try current URL pattern first, then archive
                 for template in [EIA_860M_URL_TEMPLATE, EIA_860M_ARCHIVE_TEMPLATE]:
                     url = template.format(month=month_name, year=year)
                     try:
-                        r = requests.head(url, headers=headers, timeout=10, allow_redirects=True)
-                        if r.status_code == 200:
+                        # Stream just 2 bytes to verify it's a Zip/XLSX file (b'PK') 
+                        # EIA.gov returns 200 OK HTML error pages for missing future files!
+                        r = requests.get(url, headers=headers, timeout=10, stream=True)
+                        head = r.raw.read(2)
+                        r.close()
+                        if r.status_code == 200 and head == b'PK':
+                            self._log(f"Found valid EIA-860M file: {url}")
                             return url
-                    except Exception:
+                    except Exception as e:
                         continue
         return None
 
@@ -99,21 +101,21 @@ class EIA860MScraper(BaseScraper):
 
         self._log(f"Downloading EIA-860M from {url}")
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': 'python-requests/2.31.0',
         }
         
         try:
-            r = requests.get(url, headers=headers, timeout=60)
-            if r.status_code != 200 or r.content[:2] != b'PK':
-                msg = f"EIA-860M download failed: status {r.status_code}"
+            result = download_file(url, timeout=60, extra_headers=headers)
+            if not result.success or not result.content:
+                msg = f"EIA-860M download failed: {result.error}"
                 self._log(msg)
                 return [], self._finish_run(ScraperStatus.PARTIAL, msg)
             
-            run.bytes_downloaded = len(r.content)
-            self._log(f"Downloaded {len(r.content):,} bytes")
+            run.bytes_downloaded = result.bytes_downloaded or 0
+            self._log(f"Downloaded {run.bytes_downloaded:,} bytes (cache={result.from_cache})")
             
             # Parse the Planned sheet
-            df = pd.read_excel(io.BytesIO(r.content), sheet_name='Planned', header=2, engine='openpyxl')
+            df = pd.read_excel(io.BytesIO(result.content), sheet_name='Planned', header=2, engine='openpyxl')
             self._log(f"Planned sheet: {len(df)} generators")
             
             # Also parse Canceled/Postponed for historical data
@@ -131,7 +133,7 @@ class EIA860MScraper(BaseScraper):
             run.fields_produced = ["queue_id", "project_name", "mw_requested", "state",
                                    "county", "in_service_date", "confidence"]
             
-            self._log(f"Found {len(projects)} planned generators for {', '.join(TARGET_ISOS)}")
+            self._log(f"Found {len(projects)} planned generators for ISO: {self.iso}")
             status = ScraperStatus.SUCCESS if projects else ScraperStatus.PARTIAL
             
         except Exception as e:
@@ -182,8 +184,8 @@ class EIA860MScraper(BaseScraper):
                     continue
                 
                 iso = STATE_TO_ISO.get(state, "")
-                if iso not in TARGET_ISOS:
-                    continue  # Skip states covered by working scrapers
+                if self.iso != "EIA" and iso != self.iso.upper():
+                    continue  # Only target the specific ISO requested
                 
                 # Parse MW
                 mw = None

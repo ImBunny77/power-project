@@ -27,9 +27,13 @@ from src.models.project import Project
 from src.models.scraper_run import ScraperRun, ScraperStatus
 from src.pipeline.dedup import dedup_projects
 from src.scrapers.nyiso import NYISOScraper
+from src.scrapers.pjm import PJMScraper
 from src.scrapers.caiso import CAISOScraper
+from src.scrapers.spp import SPPScraper
 from src.scrapers.miso import MISOScraper
+from src.scrapers.ercot import ERCOTScraper
 from src.scrapers.iso_ne import ISONEScraper
+from src.scrapers.ferc_filings import FERCFilingsScraper
 from src.scrapers.eia_860m import EIA860MScraper
 from src.storage.database import Database
 
@@ -37,10 +41,12 @@ logger = logging.getLogger(__name__)
 
 SCRAPER_REGISTRY = {
     "nyiso": NYISOScraper,
+    "pjm": PJMScraper,
     "caiso": CAISOScraper,
+    "spp": SPPScraper,
     "miso": MISOScraper,
+    "ercot": ERCOTScraper,
     "iso_ne": ISONEScraper,
-    "eia_860m": EIA860MScraper,  # Covers PJM, SPP, ERCOT
 }
 
 
@@ -147,6 +153,37 @@ def run_refresh(
         logger.info(f"Running scraper: {source_key}")
         try:
             projects, scraper_run = scraper.run()
+        except Exception as e:
+            logger.exception(f"Scraper {source_key} threw exception: {e}")
+            projects, scraper_run = [], ScraperRun(
+                run_id=f"{run_id}_{source_key}_failed",
+                source=source_key,
+                status=ScraperStatus.FAILED,
+                started_at=datetime.utcnow(),
+                finished_at=datetime.utcnow(),
+                error_message=str(e)
+            )
+
+        # Robust Fallback to EIA-860M for missing ISO data
+        needs_fallback = (not projects or scraper_run.status != ScraperStatus.SUCCESS)
+        if needs_fallback and source_key not in ("eia_860m", "ferc_filings"):
+            logger.warning(f"[{source_key}] primary scraper returned {len(projects)} records (status: {scraper_run.status.value}). Falling back to EIA-860M...")
+            try:
+                from src.scrapers.eia_860m import EIA860MScraper
+                fallback = EIA860MScraper(config=scraper_configs.get("eia_860m", {}), db=db)
+                fallback.iso = scraper.iso
+                fallback_projects, fallback_run = fallback.run()
+                if fallback_projects:
+                    logger.info(f"[{source_key}] Fallback successful: found {len(fallback_projects)} EIA-860M records.")
+                    projects = fallback_projects
+                    scraper_run = fallback_run
+                    scraper_run.source = source_key
+                    scraper_run.error_message = None
+                    scraper_run.status = ScraperStatus.SUCCESS
+            except Exception as fe:
+                logger.exception(f"Fallback {source_key} failed: {fe}")
+
+        try:
             run_dict = scraper_run.model_dump()
             run_dict["run_id"] = f"{run_id}_{source_key}"
             scraper_runs.append(run_dict)
@@ -172,7 +209,7 @@ def run_refresh(
             logger.info(f"  {source_key}: {len(projects)} projects, status={scraper_run.status.value}")
 
         except Exception as e:
-            logger.exception(f"Scraper {source_key} failed: {e}")
+            logger.exception(f"Scraper {source_key} crash during saving: {e}")
             summary["errors"].append({"source": source_key, "error": str(e)})
             summary["sources_run"].append({
                 "source": source_key,
