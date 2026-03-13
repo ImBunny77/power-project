@@ -205,10 +205,11 @@ def geocode_projects_inplace(df, db=None) -> None:
     """
     if df.empty:
         return
+    import pandas as pd
     for idx, row in df.iterrows():
         lat = row.get("latitude")
         lon = row.get("longitude")
-        if lat and lon and lat != 0 and lon != 0:
+        if pd.notna(lat) and pd.notna(lon) and lat != 0 and lon != 0:
             continue  # Already has coords
         coords = lookup_county_centroid(
             row.get("county"), row.get("state")
