@@ -1,11 +1,16 @@
 {
-  "run_id": "2d9fab8d",
-  "started_at": "2026-03-06T19:38:12.099768",
+  "run_id": "1c775c75",
+  "started_at": "2026-03-13T20:27:44.437623",
   "sources_run": [
     {
       "source": "nyiso",
       "status": "success",
-      "projects": 149
+      "projects": 148
+    },
+    {
+      "source": "pjm",
+      "status": "success",
+      "projects": 562
     },
     {
       "source": "caiso",
@@ -13,27 +18,32 @@
       "projects": 108
     },
     {
+      "source": "spp",
+      "status": "success",
+      "projects": 282
+    },
+    {
       "source": "miso",
       "status": "success",
-      "projects": 3628
+      "projects": 3630
+    },
+    {
+      "source": "ercot",
+      "status": "success",
+      "projects": 452
     },
     {
       "source": "iso_ne",
       "status": "success",
       "projects": 1319
-    },
-    {
-      "source": "eia_860m",
-      "status": "success",
-      "projects": 2282
     }
   ],
-  "total_new": 0,
-  "total_updated": 7486,
-  "total_removed": 0,
-  "total_projects": 7290,
+  "total_new": 1,
+  "total_updated": 6461,
+  "total_removed": 41,
+  "total_projects": 7223,
   "errors": [],
-  "finished_at": "2026-03-06T19:43:25.147764",
-  "duration_seconds": 313.047996,
+  "finished_at": "2026-03-13T20:32:39.840970",
+  "duration_seconds": 295.403347,
   "total_unchanged": 0
 }
