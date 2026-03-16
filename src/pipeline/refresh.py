@@ -116,6 +116,7 @@ def run_refresh(
 
     all_scraped_projects: list[dict] = []
     scraper_runs: list[dict] = []
+    fallback_isos: set[str] = set()  # ISOs that used EIA-860M fallback (don't remove their existing data)
 
     # Get existing projects for dedup comparison
     existing_projects = db.get_projects(min_mw=0, limit=100000)
@@ -180,6 +181,7 @@ def run_refresh(
                     scraper_run.source = source_key
                     scraper_run.error_message = None
                     scraper_run.status = ScraperStatus.SUCCESS
+                    fallback_isos.add(scraper.iso)  # Mark this ISO as fallback — preserve existing DB data
             except Exception as fe:
                 logger.exception(f"Fallback {source_key} failed: {fe}")
 
@@ -273,7 +275,7 @@ def run_refresh(
             logger.warning(f"Update error for {p.get('id')}: {e}")
 
     # Detect removals: projects that were in existing but NOT in new scraped results
-    # Only for ISOs that were actually scraped this run
+    # Only for ISOs that were actually scraped this run AND not using EIA fallback
     scraped_isos = {p.get("iso") for p in scraped_above_min}
     scraped_ids = (
         {p.get("id") for p in to_insert if p.get("id")} |
@@ -281,14 +283,38 @@ def run_refresh(
         set(unchanged_ids)
     )
 
+    # Safety: count scraped projects per ISO vs existing per ISO
+    scraped_per_iso: dict[str, int] = {}
+    for p in scraped_above_min:
+        iso = p.get("iso", "")
+        scraped_per_iso[iso] = scraped_per_iso.get(iso, 0) + 1
+
+    existing_per_iso: dict[str, int] = {}
+    for p in existing_projects:
+        iso = p.get("iso", "")
+        existing_per_iso[iso] = existing_per_iso.get(iso, 0) + 1
+
+    # Determine which ISOs are safe to run removal on
+    safe_removal_isos: set[str] = set()
+    for iso in scraped_isos:
+        if iso in fallback_isos:
+            logger.info(f"[{iso}] Skipping removal — used EIA-860M fallback (preserving existing DB data)")
+            continue
+        new_count = scraped_per_iso.get(iso, 0)
+        old_count = existing_per_iso.get(iso, 0)
+        if old_count > 0 and new_count < old_count * 0.5:
+            logger.warning(f"[{iso}] Skipping removal — scraped only {new_count} vs {old_count} existing (< 50% threshold)")
+            continue
+        safe_removal_isos.add(iso)
+
     removed_count = 0
     for existing_p in existing_projects:
         e_iso = existing_p.get("iso")
         e_id = existing_p.get("id")
         e_status = existing_p.get("status", "")
 
-        if e_iso not in scraped_isos:
-            continue  # Not scraped this run, don't mark removed
+        if e_iso not in safe_removal_isos:
+            continue  # Not safe to remove — either not scraped, used fallback, or below threshold
         if e_status in ("withdrawn", "completed"):
             continue  # Already handled
         if e_id not in scraped_ids:

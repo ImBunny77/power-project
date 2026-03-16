@@ -1,6 +1,6 @@
 {
-  "run_id": "1c775c75",
-  "started_at": "2026-03-13T20:27:44.437623",
+  "run_id": "729c86c1",
+  "started_at": "2026-03-16T17:05:19.996001",
   "sources_run": [
     {
       "source": "nyiso",
@@ -25,7 +25,7 @@
     {
       "source": "miso",
       "status": "success",
-      "projects": 3630
+      "projects": 3631
     },
     {
       "source": "ercot",
@@ -39,11 +39,11 @@
     }
   ],
   "total_new": 1,
-  "total_updated": 6461,
-  "total_removed": 41,
-  "total_projects": 7223,
+  "total_updated": 6462,
+  "total_removed": 0,
+  "total_projects": 7224,
   "errors": [],
-  "finished_at": "2026-03-13T20:32:39.840970",
-  "duration_seconds": 295.403347,
+  "finished_at": "2026-03-16T17:13:31.850969",
+  "duration_seconds": 491.854968,
   "total_unchanged": 0
 }

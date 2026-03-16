@@ -58,7 +58,8 @@ def ensure_data_loaded():
     """Auto-refresh if database is empty (first run on Streamlit Cloud)."""
     if "data_initialized" not in st.session_state:
         db = get_db()
-        if db.get_project_count(min_mw=0) == 0:
+        project_count = db.get_project_count(min_mw=0)
+        if project_count == 0:
             with st.spinner("First run — fetching data from ISOs... (this may take ~90 seconds)"):
                 try:
                     from src.pipeline.refresh import run_refresh
@@ -75,6 +76,9 @@ def ensure_data_loaded():
                     st.session_state["data_initialized"] = True
         else:
             st.session_state["data_initialized"] = True
+            if project_count > 1000:
+                # DB was pre-populated from Git (local push). No need to auto-refresh.
+                pass
 
     # Show first-run summary if available
     if "first_run_summary" in st.session_state:
