@@ -178,7 +178,7 @@ def run_refresh(
                     logger.info(f"[{source_key}] Fallback successful: found {len(fallback_projects)} EIA-860M records.")
                     projects = fallback_projects
                     scraper_run = fallback_run
-                    scraper_run.source = source_key
+                    scraper_run.source_key = source_key
                     scraper_run.error_message = None
                     scraper_run.status = ScraperStatus.SUCCESS
                     fallback_isos.add(scraper.iso)  # Mark this ISO as fallback — preserve existing DB data
