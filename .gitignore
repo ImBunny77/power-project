@@ -16,11 +16,10 @@ venv/
 env/
 ENV/
 
-# Data (DB is built on first run, don't commit binary SQLite files)
+# Data (keep the main DB tracked for Streamlit Cloud; ignore temp/cache files)
 data/download_cache/
 data/.refresh.lock
 data/geocode_cache.db
-data/power_project.db
 data/power_project.db-wal
 data/power_project.db-shm
 *.lock
